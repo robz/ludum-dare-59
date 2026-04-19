@@ -46,10 +46,14 @@ Math.random = function () {
 
 const browserCanvas = createCanvas(BW, BH);
 global.window = global;
-global.document = { getElementById: id => (id === 'game' ? browserCanvas : null) };
+global.document = {
+  getElementById: id => (id === 'game' ? browserCanvas : null),
+  createElement: tag => (tag === 'canvas' ? createCanvas(1, 1) : null),
+};
 global.innerWidth = BW;
 global.innerHeight = BH;
 global.addEventListener = () => {};
+global.requestAnimationFrame = () => 0;
 
 const { draw } = await import('./src/main.js');
 if (args.centerx !== undefined || args.centery !== undefined) {
