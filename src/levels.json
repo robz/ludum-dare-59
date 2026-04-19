@@ -1,0 +1,85 @@
+{
+  "levels": [
+    {
+      "name": "Level 1 — Single Letters",
+      "duration": 90,
+      "spawnInterval": [2.0, 3.2],
+      "enemySpeed": 14,
+      "maxActive": 3,
+      "mode": "letters",
+      "words": []
+    },
+    {
+      "name": "Level 2 — Distress Calls",
+      "duration": 90,
+      "spawnInterval": [2.4, 3.6],
+      "enemySpeed": 15,
+      "maxActive": 3,
+      "mode": "mixed",
+      "words": ["SOS", "AT", "ON", "IN", "IS", "IT", "NO", "HI", "TO", "AM", "OK"]
+    },
+    {
+      "name": "Level 3 — Short Words",
+      "duration": 90,
+      "spawnInterval": [2.6, 3.6],
+      "enemySpeed": 17,
+      "maxActive": 4,
+      "mode": "mixed",
+      "words": ["FIRE", "HELP", "STOP", "DOWN", "RUN", "CODE", "TANK", "AIR", "WAR", "HIT"]
+    },
+    {
+      "name": "Level 4 — Tactical",
+      "duration": 90,
+      "spawnInterval": [2.4, 3.2],
+      "enemySpeed": 19,
+      "maxActive": 4,
+      "mode": "words",
+      "words": ["ALPHA", "BRAVO", "DELTA", "ECHO", "GOLF", "HOTEL", "INDIA", "MIKE", "NOVEMBER", "OSCAR", "RADIO", "SCOUT"]
+    },
+    {
+      "name": "Level 5 — Signals",
+      "duration": 90,
+      "spawnInterval": [2.2, 3.0],
+      "enemySpeed": 21,
+      "maxActive": 5,
+      "mode": "words",
+      "words": ["MAYDAY", "SIGNAL", "TARGET", "DANGER", "INCOMING", "ENEMY", "FRIEND", "ALERT"]
+    },
+    {
+      "name": "Level 6 — Storms",
+      "duration": 90,
+      "spawnInterval": [2.0, 2.8],
+      "enemySpeed": 23,
+      "maxActive": 5,
+      "mode": "words",
+      "words": ["THUNDER", "CYCLONE", "TORNADO", "BLIZZARD", "HURRICANE", "MONSOON"]
+    },
+    {
+      "name": "Level 7 — Operations",
+      "duration": 90,
+      "spawnInterval": [1.8, 2.6],
+      "enemySpeed": 25,
+      "maxActive": 6,
+      "mode": "words",
+      "words": ["OPERATION", "PROTOCOL", "PERIMETER", "ORDNANCE", "CASUALTY", "EVACUATE"]
+    },
+    {
+      "name": "Level 8 — Mayhem",
+      "duration": 90,
+      "spawnInterval": [1.6, 2.4],
+      "enemySpeed": 27,
+      "maxActive": 6,
+      "mode": "words",
+      "words": ["ANNIHILATE", "INTERCEPT", "COORDINATE", "ARTILLERY", "FIREPOWER", "STRONGHOLD"]
+    },
+    {
+      "name": "Level 9 — Endgame",
+      "duration": 90,
+      "spawnInterval": [1.4, 2.0],
+      "enemySpeed": 30,
+      "maxActive": 7,
+      "mode": "words",
+      "words": ["TRANSMISSION", "RECONNAISSANCE", "COMMUNICATION", "BOMBARDMENT", "INFILTRATION"]
+    }
+  ]
+}
