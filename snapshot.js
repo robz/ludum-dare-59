@@ -33,6 +33,8 @@ function parseArgs(argv) {
     else if (a === '--explainerindex' || a === '--explainerIndex') out.explainerIndex = parseInt(argv[++i], 10);
     else if (a === '--promotion') out.promotion = argv[++i];
     else if (a === '--pressedForMs' || a === '--pressed') out.pressedForMs = parseInt(argv[++i], 10);
+    else if (a === '--tooltipLetter' || a === '--tooltip') out.tooltipLetter = argv[++i];
+    else if (a === '--scorebubbles') out.scoreBubbles = argv[++i].split(',');
     else if (a === '-h' || a === '--help') out.help = true;
   }
   return out;
@@ -115,6 +117,8 @@ if (args.promotion) {
   };
 }
 if (args.pressedForMs !== undefined) drawOptions.pressedForMs = args.pressedForMs;
+if (args.tooltipLetter) drawOptions.tooltipLetter = args.tooltipLetter;
+if (args.scoreBubbles) drawOptions.scoreBubbles = args.scoreBubbles;
 if (args.press) {
   // Encoding: `.` or `-` emit a press; `|` = char gap (3u) before next press;
   // ` ` = word gap (7u); default in-letter spacing is 1u.
@@ -137,9 +141,10 @@ if (args.scene === 'dead') {
     cpm: 16.8,
     survivedSec: 172.3,
     levelReached: args.level ?? 3,
-    highScore: 2400,
-    maxLevel: 5,
+    highScore: 16.8,
     newHighScore: true,
+    rank: 2,
+    total: 7,
   };
 }
 

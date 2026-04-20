@@ -1,11 +1,11 @@
 // Help overlay: morse code tree plus a cycleable "how morse code works"
-// explanation. Use arrow keys to rotate through the 4 explainer variants.
+// explanation. Use arrow keys to rotate through the explainer variants.
 
 import { CODE_TO_LETTER, LETTER_TO_CODE } from './morse.js';
 
-export const EXPLAINER_COUNT = 4;
+export const EXPLAINER_COUNT = 2;
 
-export function drawHelp(ctx, rect, { usedLetters = new Set(), explainer = 0 } = {}) {
+export function drawHelp(ctx, rect, { usedLetters = new Set(), explainer = 0, isTouch = false } = {}) {
   const { x, y, w, h } = rect;
   ctx.fillStyle = 'rgba(0, 10, 5, 0.82)';
   ctx.fillRect(x, y, w, h);
@@ -27,10 +27,19 @@ export function drawHelp(ctx, rect, { usedLetters = new Set(), explainer = 0 } =
   ctx.textBaseline = 'top';
   ctx.fillText('HELP', mx + mw / 2, my + 14);
 
-  // Layout: explainer on top third, tree below.
+  // Instruction line under the title — always visible regardless of variant.
+  ctx.fillStyle = '#ffd070';
+  ctx.font = 'bold 15px monospace';
+  ctx.fillText(
+    isTouch
+      ? 'Tap to send a dot ·    Hold down longer to send a dash —'
+      : 'Tap to send a dot ·    Hold down longer to send a dash —',
+    mx + mw / 2, my + 46
+  );
+
   const padX = 24;
-  const headerY = my + 52;
-  const explainerH = Math.round(mh * 0.36);
+  const headerY = my + 80;
+  const explainerH = Math.round(mh * 0.34);
   const explainerRect = {
     x: mx + padX, y: headerY,
     w: mw - 2 * padX, h: explainerH,
@@ -84,27 +93,36 @@ function drawExplainerFrame(ctx, rect, index) {
 const EXPLAINER_VARIANTS = [
   drawVariantTimeline,
   drawVariantAnatomy,
-  drawVariantTable,
-  drawVariantBeats,
 ];
 
 function drawVariantTimeline(ctx, rect) {
-  // Variant 1: callout-annotated timeline rendering "SOS".
+  // "A TV" rendered to scale: 1-unit dots, 3-unit dashes, 1-unit intra-letter
+  // gaps, 3-unit inter-letter gaps, 7-unit word gap.
   const { x, y, w, h } = rect;
-  const unit = Math.max(12, Math.min(22, Math.floor((w - 80) / 44)));
-  const barH = 26;
+  // Total units in "A TV":
+  //   A = dot + 1 + dash         (1 + 1 + 3)                = 5 units
+  //   word gap (A → T)                                      = 7 units
+  //   T = dash                   (3)                        = 3 units
+  //   char gap (T → V)                                      = 3 units
+  //   V = dot + 1 + dot + 1 + dot + 1 + dash  (1+1+1+1+1+1+3) = 9 units
+  //   --------------------------------------------------------
+  //   Total                                                 = 27 units
+  const TOTAL_UNITS = 27;
+  // Pick a unit width that fits inside the rect (with side padding for callout labels).
+  const leftPad = 24, rightPad = 24;
+  const unit = Math.floor((w - leftPad - rightPad) / TOTAL_UNITS);
+  const barH = 30;
   const baseY = y + h * 0.58;
-  const startX = x + 40;
+  const startX = x + leftPad;
   let tx = startX;
 
   ctx.save();
   const seq = [
-    { sym: '.' }, { gap: 1 }, { sym: '.' }, { gap: 1 }, { sym: '.' },
-    { gap: 3, boundary: 'char' },
-    { sym: '-' }, { gap: 1 }, { sym: '-' }, { gap: 1 }, { sym: '-' },
-    { gap: 3, boundary: 'char' },
-    { sym: '.' }, { gap: 1 }, { sym: '.' }, { gap: 1 }, { sym: '.' },
+    { sym: '.' }, { gap: 1 }, { sym: '-' },
     { gap: 7, boundary: 'word' },
+    { sym: '-' },
+    { gap: 3, boundary: 'char' },
+    { sym: '.' }, { gap: 1 }, { sym: '.' }, { gap: 1 }, { sym: '.' }, { gap: 1 }, { sym: '-' },
   ];
 
   const barSpans = [];
@@ -115,7 +133,7 @@ function drawVariantTimeline(ctx, rect) {
       barSpans.push({ x: tx, w: widthUnits * unit, sym: e.sym });
       tx += widthUnits * unit;
     } else {
-      gapSpans.push({ x: tx, w: e.gap * unit, boundary: e.boundary });
+      gapSpans.push({ x: tx, w: e.gap * unit, boundary: e.boundary, units: e.gap });
       tx += e.gap * unit;
     }
   }
@@ -128,40 +146,42 @@ function drawVariantTimeline(ctx, rect) {
 
   // Letter labels above
   ctx.fillStyle = '#eaffe1';
-  ctx.font = 'bold 16px monospace';
+  ctx.font = 'bold 18px monospace';
   ctx.textAlign = 'center';
   ctx.textBaseline = 'bottom';
-  const labelY = baseY - 10;
-  const sCenter  = (barSpans[0].x + barSpans[2].x + barSpans[2].w) / 2;
-  const oCenter  = (barSpans[3].x + barSpans[5].x + barSpans[5].w) / 2;
-  const s2Center = (barSpans[6].x + barSpans[8].x + barSpans[8].w) / 2;
-  ctx.fillText('S', sCenter,  labelY);
-  ctx.fillText('O', oCenter,  labelY);
-  ctx.fillText('S', s2Center, labelY);
+  const labelY = baseY - 8;
+  // A spans barSpans[0..1], T is barSpans[2], V spans barSpans[3..6]
+  const aCenter = (barSpans[0].x + barSpans[1].x + barSpans[1].w) / 2;
+  const tCenter = barSpans[2].x + barSpans[2].w / 2;
+  const vCenter = (barSpans[3].x + barSpans[6].x + barSpans[6].w) / 2;
+  ctx.fillText('A', aCenter, labelY);
+  ctx.fillText('T', tCenter, labelY);
+  ctx.fillText('V', vCenter, labelY);
 
-  // Brackets under groups
-  ctx.strokeStyle = 'rgba(180, 255, 200, 0.45)';
+  // Brackets under each letter
+  ctx.strokeStyle = 'rgba(180, 255, 200, 0.55)';
   ctx.lineWidth = 1;
-  for (const [start, end] of [
-    [barSpans[0].x, barSpans[2].x + barSpans[2].w],
-    [barSpans[3].x, barSpans[5].x + barSpans[5].w],
-    [barSpans[6].x, barSpans[8].x + barSpans[8].w],
-  ]) {
+  const brackets = [
+    [barSpans[0].x,                   barSpans[1].x + barSpans[1].w], // A
+    [barSpans[2].x,                   barSpans[2].x + barSpans[2].w], // T
+    [barSpans[3].x,                   barSpans[6].x + barSpans[6].w], // V
+  ];
+  for (const [s, e] of brackets) {
     ctx.beginPath();
-    ctx.moveTo(start, baseY + barH + 2);
-    ctx.lineTo(start, baseY + barH + 6);
-    ctx.lineTo(end,   baseY + barH + 6);
-    ctx.lineTo(end,   baseY + barH + 2);
+    ctx.moveTo(s, baseY + barH + 2);
+    ctx.lineTo(s, baseY + barH + 6);
+    ctx.lineTo(e, baseY + barH + 6);
+    ctx.lineTo(e, baseY + barH + 2);
     ctx.stroke();
   }
 
-  // Callouts with leader lines — positioned above or below so they don't collide.
+  // Callouts: dot, dash, symbol gap, letter gap, word gap
   const callouts = [
-    { tx: barSpans[0].x + barSpans[0].w / 2,  ty: baseY,           lx: barSpans[0].x + barSpans[0].w / 2,  ly: baseY - 60, text: 'DOT\n1 unit', color: '#6afc90' },
-    { tx: barSpans[3].x + barSpans[3].w / 2,  ty: baseY,           lx: barSpans[4].x + barSpans[4].w / 2,  ly: baseY - 60, text: 'DASH\n3 units', color: '#6afc90' },
-    { tx: gapSpans[0].x + gapSpans[0].w / 2,  ty: baseY + barH,    lx: gapSpans[0].x + gapSpans[0].w / 2,  ly: baseY + barH + 34, text: 'symbol gap · 1 unit', color: '#a7cfff', below: true },
-    { tx: gapSpans[2].x + gapSpans[2].w / 2,  ty: baseY + barH,    lx: gapSpans[2].x + gapSpans[2].w / 2,  ly: baseY + barH + 58, text: 'letter gap · 3 units', color: '#a7cfff', below: true },
-    { tx: gapSpans[5].x + gapSpans[5].w / 2,  ty: baseY + barH,    lx: gapSpans[5].x + gapSpans[5].w / 2,  ly: baseY + barH + 34, text: 'word gap · 7 units', color: '#ffd070', below: true },
+    { tx: barSpans[0].x + barSpans[0].w / 2,          ty: baseY,        lx: barSpans[0].x + barSpans[0].w / 2,          ly: baseY - 54, text: 'DOT\n1 unit', color: '#6afc90' },
+    { tx: barSpans[1].x + barSpans[1].w / 2,          ty: baseY,        lx: barSpans[1].x + barSpans[1].w / 2,          ly: baseY - 54, text: 'DASH\n3 units', color: '#6afc90' },
+    { tx: gapSpans[0].x + gapSpans[0].w / 2,          ty: baseY + barH, lx: gapSpans[0].x + gapSpans[0].w / 2,          ly: baseY + barH + 30, text: 'symbol gap · 1u', color: '#a7cfff', below: true },
+    { tx: gapSpans[1].x + gapSpans[1].w / 2,          ty: baseY + barH / 2, lx: gapSpans[1].x + gapSpans[1].w / 2,      ly: baseY + barH + 54, text: 'word gap · 7 units', color: '#ffd070', below: true },
+    { tx: gapSpans[2].x + gapSpans[2].w / 2,          ty: baseY + barH, lx: gapSpans[2].x + gapSpans[2].w / 2,          ly: baseY + barH + 30, text: 'letter gap · 3 units', color: '#a7cfff', below: true },
   ];
 
   for (const c of callouts) {
@@ -184,12 +204,31 @@ function drawVariantTimeline(ctx, rect) {
     }
   }
 
+  // Word-gap highlight: show the 7-unit span explicitly with tick marks
+  const wgap = gapSpans[1];
+  ctx.strokeStyle = 'rgba(255, 208, 112, 0.45)';
+  ctx.setLineDash([3, 3]);
+  ctx.beginPath();
+  ctx.moveTo(wgap.x, baseY - 4);
+  ctx.lineTo(wgap.x + wgap.w, baseY - 4);
+  ctx.stroke();
+  ctx.setLineDash([]);
+  // Mini unit ticks along the word gap
+  ctx.strokeStyle = 'rgba(255, 208, 112, 0.55)';
+  for (let i = 0; i <= 7; i++) {
+    const px = wgap.x + i * unit;
+    ctx.beginPath();
+    ctx.moveTo(px, baseY - 8);
+    ctx.lineTo(px, baseY - 2);
+    ctx.stroke();
+  }
+
   ctx.restore();
 }
 
 function drawVariantAnatomy(ctx, rect) {
-  // Variant 2: letter-anatomy grid. Shows 6 example letters, each with
-  // its morse bars drawn to scale and labeled.
+  // Letter-anatomy grid. Shows 6 example letters, each with its morse bars
+  // drawn to scale and labeled.
   const { x, y, w, h } = rect;
   const examples = ['E', 'T', 'A', 'N', 'S', 'O'];
   const cols = 3;
@@ -214,7 +253,6 @@ function drawVariantAnatomy(ctx, rect) {
     ctx.textBaseline = 'middle';
     ctx.fillText(letter, x + col * cellW + 36, cy);
 
-    // Draw morse bars
     let tx = x + col * cellW + 66;
     const by = cy - barH / 2;
     for (let j = 0; j < code.length; j++) {
@@ -223,7 +261,7 @@ function drawVariantAnatomy(ctx, rect) {
       ctx.fillStyle = '#6afc90';
       ctx.fillRect(tx, by, wU * unit, barH);
       tx += wU * unit;
-      if (j < code.length - 1) tx += unit; // 1 unit gap
+      if (j < code.length - 1) tx += unit;
     }
     ctx.fillStyle = '#8fffa1';
     ctx.font = '13px monospace';
@@ -236,85 +274,6 @@ function drawVariantAnatomy(ctx, rect) {
   ctx.textAlign = 'left';
   ctx.textBaseline = 'top';
   ctx.fillText('Short = dot (1 unit), long = dash (3 units). Every symbol inside a letter is separated by 1 unit of silence.', x, y + h - 14);
-  ctx.restore();
-}
-
-function drawVariantTable(ctx, rect) {
-  // Variant 3: alphabetical table of every letter and its morse code.
-  const { x, y, w, h } = rect;
-  const letters = Object.keys(LETTER_TO_CODE).sort();
-  const cols = 7;
-  const rows = Math.ceil(letters.length / cols);
-  const cellW = w / cols;
-  const cellH = Math.min((h - 26) / rows, 32);
-
-  ctx.save();
-  ctx.font = 'bold 16px monospace';
-  for (let i = 0; i < letters.length; i++) {
-    const L = letters[i];
-    const col = i % cols;
-    const row = Math.floor(i / cols);
-    const cx = x + col * cellW + cellW / 2;
-    const cy = y + 4 + row * cellH + cellH / 2;
-    ctx.textAlign = 'right';
-    ctx.textBaseline = 'middle';
-    ctx.fillStyle = '#eaffe1';
-    ctx.fillText(L, cx - 6, cy);
-    ctx.textAlign = 'left';
-    ctx.fillStyle = '#8fffa1';
-    ctx.font = 'bold 14px monospace';
-    ctx.fillText(LETTER_TO_CODE[L], cx + 4, cy);
-    ctx.font = 'bold 16px monospace';
-  }
-  ctx.fillStyle = 'rgba(200, 255, 210, 0.75)';
-  ctx.font = '11px monospace';
-  ctx.textAlign = 'left';
-  ctx.textBaseline = 'bottom';
-  ctx.fillText('Alphabet reference. Each letter has a unique pattern of dots and dashes.', x, y + h - 2);
-  ctx.restore();
-}
-
-function drawVariantBeats(ctx, rect) {
-  // Variant 4: rhythmic "dit/dah" notation.
-  const { x, y, w, h } = rect;
-  ctx.save();
-  const examples = [
-    { letter: 'E', code: '.',   spoken: 'dit' },
-    { letter: 'T', code: '-',   spoken: 'dah' },
-    { letter: 'A', code: '.-',  spoken: 'di-DAH' },
-    { letter: 'S', code: '...', spoken: 'di-di-dit' },
-  ];
-  ctx.textBaseline = 'middle';
-  const footerH = 20;
-  const rowH = (h - footerH) / examples.length;
-  const barH = Math.max(14, Math.min(20, rowH * 0.4));
-  for (let i = 0; i < examples.length; i++) {
-    const e = examples[i];
-    const yy = y + i * rowH + rowH / 2;
-    ctx.fillStyle = '#eaffe1';
-    ctx.font = 'bold 22px monospace';
-    ctx.textAlign = 'left';
-    ctx.fillText(e.letter, x + 8, yy);
-    let bx = x + 52;
-    const unit = 14;
-    for (let j = 0; j < e.code.length; j++) {
-      const sym = e.code[j];
-      const wU = sym === '-' ? 3 : 1;
-      ctx.fillStyle = '#6afc90';
-      ctx.fillRect(bx, yy - barH / 2, wU * unit, barH);
-      bx += wU * unit;
-      if (j < e.code.length - 1) bx += unit;
-    }
-    ctx.fillStyle = '#ffd070';
-    ctx.font = 'italic 16px monospace';
-    ctx.textAlign = 'left';
-    ctx.fillText(e.spoken, bx + 18, yy);
-  }
-  ctx.fillStyle = 'rgba(200, 255, 210, 0.75)';
-  ctx.font = '11px monospace';
-  ctx.textAlign = 'left';
-  ctx.textBaseline = 'bottom';
-  ctx.fillText('Operators hum the pattern: "dit" for a dot, "dah" for a dash.', x, y + h - 2);
   ctx.restore();
 }
 

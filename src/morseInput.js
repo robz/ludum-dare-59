@@ -70,8 +70,11 @@ export class MorseInput {
     if (this._pressStart !== null) return;
 
     // Update unit estimate from keydown interval (within current character).
+    // The interval is halved before being fed to the filter — earlier
+    // versions were pushing the unit upward roughly twice as fast as they
+    // should, so we correct for that here.
     if (this._lastKeyDown !== null && this._currentCode.length > 0) {
-      const interval = now - this._lastKeyDown;
+      const interval = (now - this._lastKeyDown) / 2;
       const lastSym = this._currentCode[this._currentCode.length - 1];
       const expected = lastSym === '-' ? 4 : 2; // units between consecutive downs
       const estimate = interval / expected;

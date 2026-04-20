@@ -10,7 +10,7 @@ import { CodeInputSliding } from './codeInputSliding.js';
 import { AttackView } from './attackView.js';
 import { MorseInput } from './morseInput.js';
 import { SettingsOverlay, loadSettings, saveSettings, DEFAULTS } from './settings.js';
-import { loadProgress, saveProgress } from './progress.js';
+import { loadProgress, saveProgress, recordScore } from './progress.js';
 import { drawHelp, EXPLAINER_COUNT } from './help.js';
 import { drawLeaderboard } from './leaderboard.js';
 import { drawTape } from './tape.js';
@@ -62,6 +62,9 @@ function makeInitialState() {
     destroyCount: new Map(),
     killedLetters: new Set(),
     seenLetters: new Set(),
+    introducedLetters: new Set(),
+    letterTooltip: null,
+    scoreBubbles: [],
     wordBuffer: [],
     invalidBanner: null,
     titleLevelPick: 1,
@@ -149,6 +152,9 @@ function startGame(fromLevel = 1) {
   state.destroyCount = new Map();
   state.killedLetters = new Set();
   state.seenLetters = new Set();
+  state.introducedLetters = new Set();
+  state.letterTooltip = null;
+  state.scoreBubbles = [];
   state.wordBuffer = [];
   state.codeInput = makeCodeInput(state.settings.interface);
   state.attackView = new AttackView({ enemySpeed: getLevel(fromLevel).enemySpeed });
@@ -198,21 +204,22 @@ function declinePromotion() {
 
 function die() {
   const destroyed = state.enemiesDestroyed;
-  const score = destroyed * 100 + state.level * 50;
-  const newHigh = score > (state.progress.highScore || 0);
-  if (newHigh) state.progress.highScore = score;
+  const cpm = state.gameElapsed > 0 ? (state.charsSent * 60) / state.gameElapsed : 0;
+  const newHigh = cpm > (state.progress.highScore || 0);
+  if (newHigh) state.progress.highScore = cpm;
   state.progress.maxLevel = Math.max(state.progress.maxLevel || 1, state.levelReached);
+  const ranking = recordScore(state.progress, cpm);
   saveProgress(state.progress);
   state.lastRun = {
     destroyed,
     charsSent: state.charsSent,
     survivedSec: state.gameElapsed,
-    cpm: state.gameElapsed > 0 ? (state.charsSent * 60) / state.gameElapsed : 0,
+    cpm,
     levelReached: state.levelReached,
     highScore: state.progress.highScore || 0,
-    maxLevel: state.progress.maxLevel || 1,
     newHighScore: newHigh,
-    rank: rankFor(state.levelReached),
+    rank: ranking.rank,
+    total: ranking.total,
   };
   state.scene = 'dead';
   state.overlay = null;
@@ -298,7 +305,16 @@ function updatePlay(dt) {
   const active = state.attackView.activeCount();
   const canSpawn = !state.promotion || state.promotion.stage !== 'intrusive';
   if (canSpawn && state.spawnCountdown <= 0 && active < cfg.maxActive && state.levelElapsed < cfg.duration) {
-    state.attackView.spawn(pickSpawnText());
+    const text = pickSpawnText();
+    state.attackView.spawn(text);
+    if (text.length === 1 && !state.introducedLetters.has(text)) {
+      state.introducedLetters.add(text);
+      state.letterTooltip = {
+        letter: text,
+        code: LETTER_TO_CODE[text],
+        until: performance.now() + 4000,
+      };
+    }
     const [mn, mx] = cfg.spawnInterval;
     state.spawnCountdown = mn + Math.random() * (mx - mn);
   }
@@ -317,8 +333,18 @@ function updatePlay(dt) {
         if (txt.length === 1) {
           state.destroyCount.set(txt, (state.destroyCount.get(txt) || 0) + 1);
         }
+        spawnScoreBubble(txt);
       }
     }
+  }
+
+  // Advance + prune score bubbles
+  for (const b of state.scoreBubbles) b.t += dt;
+  state.scoreBubbles = state.scoreBubbles.filter(b => b.t < b.lifetime);
+
+  // Expire letter tooltip
+  if (state.letterTooltip && performance.now() > state.letterTooltip.until) {
+    state.letterTooltip = null;
   }
 
   state.codeInput.update(dt);
@@ -331,6 +357,20 @@ function updatePlay(dt) {
   if (!state.promotion && state.levelElapsed >= cfg.duration && state.attackView.activeCount() === 0) {
     triggerPromotion();
   }
+}
+
+function spawnScoreBubble(text) {
+  // Bubble appears near the DESTROYED counter and floats upward.
+  const points = text.length * 10;
+  state.scoreBubbles.push({
+    text: `+${points}`,
+    // We don't know canvas dims here cheaply; store relative coordinates and
+    // resolve at draw time. Use sentinel x=-1 to mean "right edge".
+    x: -1,
+    y: 80,
+    t: 0,
+    lifetime: 1.4,
+  });
 }
 
 function setOverlay(next) {
@@ -486,7 +526,7 @@ function handleKeyDown(e) {
   }
   if (!HOTKEYS.has(e.key)) {
     state.invalidBanner = {
-      msg: isTouch ? 'Send transmissions by tapping' : 'Send transmissions with spacebar',
+      msg: isTouch ? 'Tap to signal' : 'Spacebar to signal',
       until: performance.now() + 1600,
     };
     playError();
@@ -608,6 +648,8 @@ export function draw(options = {}) {
       orientation: landscape ? 'landscape' : 'portrait',
     });
     drawHud(W, H, layout);
+    drawScoreBubbles(W, H);
+    if (state.letterTooltip) drawLetterTooltip(W, H, layout);
     if (state.paused && !(state.promotion && state.promotion.stage === 'intrusive')) {
       drawPausedOverlay(layout.radar);
     }
@@ -623,6 +665,7 @@ export function draw(options = {}) {
     drawHelp(ctx, { x: 0, y: 0, w: W, h: H }, {
       usedLetters: state.codeInput.getUsedLetters(),
       explainer: state.explainerIndex,
+      isTouch,
     });
   } else if (state.overlay === 'settings') {
     state.settingsOverlay.draw(ctx, { x: 0, y: 0, w: W, h: H });
@@ -722,6 +765,19 @@ function applyOverrides(options) {
       letter: l,
     }));
   }
+  if (options.tooltipLetter) {
+    const L = options.tooltipLetter.toUpperCase();
+    state.letterTooltip = {
+      letter: L,
+      code: LETTER_TO_CODE[L] || '',
+      until: performance.now() + 4000,
+    };
+  }
+  if (options.scoreBubbles) {
+    state.scoreBubbles = options.scoreBubbles.map((text, i) => ({
+      text, x: -1, y: 80 + i * 20, t: 0, lifetime: 1.4,
+    }));
+  }
 }
 
 function drawTitle(W, H) {
@@ -758,6 +814,12 @@ function drawTitle(W, H) {
   ctx.fillText(
     isTouch ? 'Tap to shoot an enemy' : 'Press SPACE or click to shoot an enemy',
     cx, titleY + Math.round(Math.min(W, H) * 0.08)
+  );
+  ctx.fillStyle = 'rgba(180, 255, 200, 0.8)';
+  ctx.font = `${Math.round(Math.min(W, H) * 0.022)}px monospace`;
+  ctx.fillText(
+    isTouch ? 'Tap briefly for dots and longer for dashes' : 'Tap briefly for dots and longer for dashes',
+    cx, titleY + Math.round(Math.min(W, H) * 0.12)
   );
 
   // Level select area
@@ -868,7 +930,7 @@ function drawHud(W, H, layout) {
   ctx.textAlign = 'center';
   ctx.textBaseline = 'bottom';
   ctx.fillText(
-    isTouch ? 'TAP to transmit · tap & hold for dash' : 'SPACE to transmit · hold for dash · P pause',
+    isTouch ? 'TAP for dot · hold longer for dash · P pause' : 'SPACE for dot · hold longer for dash · P pause',
     layout.radar.x + layout.radar.w / 2,
     layout.radar.y + layout.radar.h - 8
   );
@@ -937,6 +999,62 @@ function drawBanner(W, H, msg) {
   ctx.fillText(msg, W / 2, by + bh / 2);
 }
 
+function drawLetterTooltip(W, H, layout) {
+  const t = state.letterTooltip;
+  if (!t) return;
+  const remaining = t.until - performance.now();
+  const alpha = remaining > 500 ? 1 : Math.max(0, remaining / 500);
+
+  const cx = layout.radar.x + layout.radar.w / 2;
+  const cy = layout.radar.y + Math.max(80, layout.radar.h * 0.18);
+  const size = Math.min(W, H) * 0.11;
+  const text = `${t.letter}  =  ${t.code}`;
+  ctx.save();
+  ctx.globalAlpha = alpha;
+  // Backdrop halo
+  ctx.font = `bold ${Math.round(size)}px monospace`;
+  ctx.textAlign = 'center';
+  ctx.textBaseline = 'middle';
+  const metrics = ctx.measureText(text);
+  const boxW = metrics.width + 40;
+  const boxH = size * 1.4;
+  ctx.fillStyle = 'rgba(6, 20, 10, 0.9)';
+  ctx.fillRect(cx - boxW / 2, cy - boxH / 2, boxW, boxH);
+  ctx.strokeStyle = '#ffd070';
+  ctx.lineWidth = 2;
+  ctx.strokeRect(cx - boxW / 2 + 1, cy - boxH / 2 + 1, boxW - 2, boxH - 2);
+  // Small header above
+  ctx.fillStyle = '#ffd070';
+  ctx.font = 'bold 12px monospace';
+  ctx.textBaseline = 'bottom';
+  ctx.fillText('NEW LETTER', cx, cy - boxH / 2 - 4);
+  // Big letter = code text
+  ctx.fillStyle = '#eaffe1';
+  ctx.font = `bold ${Math.round(size)}px monospace`;
+  ctx.textBaseline = 'middle';
+  ctx.fillText(text, cx, cy);
+  ctx.restore();
+}
+
+function drawScoreBubbles(W, H) {
+  if (!state.scoreBubbles || state.scoreBubbles.length === 0) return;
+  ctx.save();
+  for (const b of state.scoreBubbles) {
+    const prog = b.t / b.lifetime;
+    const alpha = Math.max(0, 1 - prog);
+    const rise = prog * 40;
+    const ax = b.x < 0 ? W - 12 : b.x;
+    const ay = b.y - rise;
+    ctx.globalAlpha = alpha;
+    ctx.fillStyle = '#ffd070';
+    ctx.font = 'bold 18px monospace';
+    ctx.textAlign = 'right';
+    ctx.textBaseline = 'middle';
+    ctx.fillText(b.text, ax, ay);
+  }
+  ctx.restore();
+}
+
 function drawPausedOverlay(rect) {
   ctx.save();
   ctx.fillStyle = 'rgba(0, 10, 5, 0.65)';
@@ -952,7 +1070,7 @@ function drawPausedOverlay(rect) {
   ctx.font = '16px monospace';
   ctx.fillStyle = 'rgba(180, 255, 200, 0.85)';
   ctx.fillText(
-    isTouch ? 'tap Resume to continue' : 'press P or SPACE to resume',
+    isTouch ? 'Tap to resume' : 'press P or SPACE to resume',
     rect.x + rect.w / 2, rect.y + rect.h / 2 + 34
   );
   ctx.restore();
