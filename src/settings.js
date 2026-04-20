@@ -5,9 +5,8 @@ export const DEFAULTS = Object.freeze({
   unitMs: 100,
   cutoff: 0.8,
   volume: 0.35,
-  showUnit: true,
   interface: 'tree', // 'tree' | 'sliding'
-  textScale: 2.0,
+  textScale: 1.75,
 });
 
 const STORAGE_KEY = 'morse-settings-v1';
@@ -35,7 +34,6 @@ const ITEMS = [
   { key: 'cutoff',  label: 'Threshold cutoff',      min: 0.5, max: 1.0, step: 0.05, fmt: v => `${v.toFixed(2)}` },
   { key: 'textScale', label: 'Text size',           min: 1.0, max: 3.0, step: 0.25, fmt: v => `${v.toFixed(2)}×` },
   { key: 'volume',  label: 'Master volume',         min: 0, max: 1,  step: 0.05, fmt: v => `${Math.round(v * 100)}%` },
-  { key: 'showUnit',label: 'Show unit (debug HUD)', toggle: true, fmt: v => v ? 'ON' : 'OFF' },
 ];
 
 export class SettingsOverlay {
@@ -51,25 +49,66 @@ export class SettingsOverlay {
     if (key === 'ArrowUp')   { this.selected = (this.selected - 1 + ITEMS.length) % ITEMS.length; return { changed: null }; }
     if (key === 'ArrowDown') { this.selected = (this.selected + 1) % ITEMS.length; return { changed: null }; }
     if (key === 'ArrowLeft' || key === 'ArrowRight') {
-      const dir = key === 'ArrowLeft' ? -1 : 1;
-      const item = ITEMS[this.selected];
-      if (item.toggle) {
-        this.settings[item.key] = !this.settings[item.key];
-      } else if (item.options) {
-        const idx = item.options.indexOf(this.settings[item.key]);
-        const next = (idx + dir + item.options.length) % item.options.length;
-        this.settings[item.key] = item.options[next];
-      } else {
-        const next = clamp((this.settings[item.key] ?? 0) + dir * item.step, item.min, item.max);
-        this.settings[item.key] = Math.round(next * 1000) / 1000;
-      }
-      saveSettings(this.settings);
-      return { changed: item.key };
+      return this._adjust(ITEMS[this.selected], key === 'ArrowLeft' ? -1 : 1);
     }
     if (key === 'r' || key === 'R') {
       Object.assign(this.settings, DEFAULTS);
       saveSettings(this.settings);
       return { changed: 'reset' };
+    }
+    return { changed: null };
+  }
+
+  _adjust(item, dir) {
+    if (item.toggle) {
+      this.settings[item.key] = !this.settings[item.key];
+    } else if (item.options) {
+      const idx = item.options.indexOf(this.settings[item.key]);
+      const next = (idx + dir + item.options.length) % item.options.length;
+      this.settings[item.key] = item.options[next];
+    } else {
+      const next = clamp((this.settings[item.key] ?? 0) + dir * item.step, item.min, item.max);
+      this.settings[item.key] = Math.round(next * 1000) / 1000;
+    }
+    saveSettings(this.settings);
+    return { changed: item.key };
+  }
+
+  geom(rect) {
+    const { x, y, w, h } = rect;
+    const mw = Math.min(w * 0.8, 620);
+    const mh = Math.min(h * 0.8, 420);
+    const mx = x + (w - mw) / 2;
+    const my = y + (h - mh) / 2;
+    const rowH = 42;
+    const startY = my + 70;
+    const rows = ITEMS.map((_, i) => ({
+      x: mx + 20,
+      y: startY + i * rowH - 6,
+      w: mw - 40,
+      h: rowH - 8,
+    }));
+    return { modal: { x: mx, y: my, w: mw, h: mh }, rows, rowH, mx, my, mw, mh };
+  }
+
+  // Returns null when the click is outside the modal (caller may dismiss);
+  // otherwise { changed } describing a row selection / adjustment that was
+  // already applied.
+  handlePointer(px, py, rect) {
+    const g = this.geom(rect);
+    if (!pointInRect(px, py, g.modal)) return null;
+    for (let i = 0; i < g.rows.length; i++) {
+      const r = g.rows[i];
+      if (!pointInRect(px, py, r)) continue;
+      this.selected = i;
+      // Arrow hit zones sit in the right third of the row.
+      const item = ITEMS[i];
+      const valueColLeft = r.x + r.w * 0.55;
+      if (px >= valueColLeft) {
+        const mid = (valueColLeft + r.x + r.w) / 2;
+        return this._adjust(item, px >= mid ? 1 : -1);
+      }
+      return { changed: null };
     }
     return { changed: null };
   }
@@ -137,3 +176,6 @@ export class SettingsOverlay {
 }
 
 function clamp(v, lo, hi) { return Math.max(lo, Math.min(hi, v)); }
+function pointInRect(x, y, r) {
+  return x >= r.x && x <= r.x + r.w && y >= r.y && y <= r.y + r.h;
+}

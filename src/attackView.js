@@ -22,14 +22,15 @@ export class AttackView {
 
   setEnemySpeed(sp) { this.enemySpeed = sp; }
 
-  spawn(text) {
+  spawn(text, opts = {}) {
     const angle = this.rng() * Math.PI * 2;
+    const scale = opts.speedScale ?? 1;
     this.enemies.push({
       id: this.nextEnemyId++,
       text: text.toUpperCase(),
       angle,
       r: 1.0,
-      speed: this.enemySpeed,
+      speed: this.enemySpeed * scale,
       litAt: -Infinity,
       dying: false,
     });
@@ -149,25 +150,24 @@ export class AttackView {
       ctx.stroke();
     }
 
-    // Sweep wedge + phosphor afterglow trail
+    // Subtle sweep: a dim phosphor trail plus a thin leading line.
     ctx.save();
     ctx.translate(cx, cy);
-    const trailArc = 1.4; // radians behind the leading edge
+    const trailArc = 1.1;
     const sg = ctx.createConicGradient
       ? ctx.createConicGradient(this.sweepAngle - trailArc, 0, 0)
       : null;
     if (sg) {
-      // Bright phosphor spike at the leading edge, long exponential fade back.
-      sg.addColorStop(0.0, 'rgba(150, 255, 170, 0.0)');
-      sg.addColorStop(0.45, 'rgba(120, 255, 140, 0.04)');
-      sg.addColorStop(0.75, 'rgba(140, 255, 160, 0.20)');
-      sg.addColorStop(0.95, 'rgba(220, 255, 220, 0.55)');
-      sg.addColorStop(trailArc / (Math.PI * 2), 'rgba(255, 255, 255, 0.85)');
-      sg.addColorStop(Math.min(1, (trailArc + 0.015) / (Math.PI * 2)), 'rgba(255, 255, 255, 0.0)');
+      sg.addColorStop(0.0, 'rgba(120, 255, 140, 0.0)');
+      sg.addColorStop(0.55, 'rgba(120, 255, 140, 0.04)');
+      sg.addColorStop(0.80, 'rgba(140, 255, 160, 0.10)');
+      sg.addColorStop(0.95, 'rgba(180, 255, 200, 0.18)');
+      sg.addColorStop(trailArc / (Math.PI * 2), 'rgba(200, 255, 215, 0.32)');
+      sg.addColorStop(Math.min(1, (trailArc + 0.012) / (Math.PI * 2)), 'rgba(200, 255, 215, 0.0)');
       sg.addColorStop(1, 'rgba(120, 255, 140, 0.0)');
       ctx.fillStyle = sg;
     } else {
-      ctx.fillStyle = 'rgba(120, 255, 140, 0.2)';
+      ctx.fillStyle = 'rgba(120, 255, 140, 0.1)';
     }
     ctx.beginPath();
     ctx.moveTo(0, 0);
@@ -175,29 +175,9 @@ export class AttackView {
     ctx.closePath();
     ctx.fill();
 
-    // Soft outer glow ring rotating just outside the trail.
-    const glow = ctx.createRadialGradient(
-      Math.cos(this.sweepAngle) * radius * 0.7,
-      Math.sin(this.sweepAngle) * radius * 0.7,
-      0,
-      Math.cos(this.sweepAngle) * radius * 0.7,
-      Math.sin(this.sweepAngle) * radius * 0.7,
-      radius * 0.35
-    );
-    glow.addColorStop(0, 'rgba(180, 255, 200, 0.25)');
-    glow.addColorStop(1, 'rgba(120, 255, 140, 0)');
-    ctx.fillStyle = glow;
-    ctx.beginPath();
-    ctx.arc(
-      Math.cos(this.sweepAngle) * radius * 0.6,
-      Math.sin(this.sweepAngle) * radius * 0.6,
-      radius * 0.4, 0, Math.PI * 2
-    );
-    ctx.fill();
-
-    // Crisp leading sweep line
-    ctx.strokeStyle = 'rgba(210, 255, 225, 0.95)';
-    ctx.lineWidth = 2;
+    // Thin leading sweep line — dim green instead of white.
+    ctx.strokeStyle = 'rgba(160, 230, 180, 0.55)';
+    ctx.lineWidth = 1.5;
     ctx.beginPath();
     ctx.moveTo(0, 0);
     ctx.lineTo(Math.cos(this.sweepAngle) * radius, Math.sin(this.sweepAngle) * radius);

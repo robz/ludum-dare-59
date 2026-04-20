@@ -68,9 +68,6 @@ export function drawLeaderboard(ctx, rect, stats) {
     ctx.fillText(`${value}`, mx + mw - 40, rowY);
   }
 
-  ctx.fillStyle = 'rgba(180, 255, 200, 0.75)';
-  ctx.font = '13px monospace';
-  ctx.textAlign = 'center';
-  ctx.textBaseline = 'bottom';
-  ctx.fillText('tap to return to title', mx + mw / 2, my + mh - 20);
+  // Continue button is drawn separately by main.js so its hit rect stays
+  // in sync with the pointer handler.
 }

@@ -2,7 +2,7 @@
 
 const STORAGE_KEY = 'morse-progress-v1';
 
-const DEFAULTS = { highScore: 0, maxLevel: 1, scores: [], seenPromotionModal: false };
+const DEFAULTS = { highScore: 0, maxLevel: 1, scores: [], seenPromotionModal: false, lastLevel: 1 };
 
 export function loadProgress() {
   try {

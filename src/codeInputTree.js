@@ -284,9 +284,9 @@ function drawNode(ctx, cx, cy, r, label, code, state, isUsed, labelFont, codeFon
   ctx.fillStyle = textColor;
   ctx.textAlign = 'center';
 
-  if (!isRoot && !landscape) {
-    // Portrait: render letter and code stacked inside the circle to avoid
-    // overcrowding at the bottom row.
+  if (!isRoot) {
+    // Both orientations render letter and code stacked *inside* the circle
+    // so leaf codes are never clipped by the panel edge.
     const letterFs = Math.max(10, Math.round(r * 0.88));
     const codeFs = Math.max(8, Math.round(r * 0.58));
     ctx.textBaseline = 'alphabetic';
@@ -299,17 +299,9 @@ function drawNode(ctx, cx, cy, r, label, code, state, isUsed, labelFont, codeFon
     ctx.fillText(code, cx, cy + r * 0.78);
   } else {
     ctx.textBaseline = 'middle';
-    const fs = isRoot ? Math.max(9, Math.round(labelFont * 0.7)) : labelFont;
-    ctx.font = `bold ${fs}px monospace`;
+    const sizePx = Math.max(9, Math.round(labelFont * 0.7));
+    ctx.font = `bold ${sizePx}px monospace`;
     ctx.fillText(label, cx, cy + 1);
-    if (code && landscape) {
-      ctx.font = `${codeFont}px monospace`;
-      ctx.fillStyle = state === 'current'
-        ? '#05140a'
-        : (state === 'ancestor' ? '#eaffe1' : '#8fffa1');
-      ctx.textBaseline = 'top';
-      ctx.fillText(code, cx, cy + r + 3);
-    }
   }
   ctx.restore();
 }

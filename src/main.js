@@ -67,7 +67,7 @@ function makeInitialState() {
     scoreBubbles: [],
     wordBuffer: [],
     invalidBanner: null,
-    titleLevelPick: 1,
+    titleLevelPick: Math.max(1, Math.min(levelCount(), progress.lastLevel || 1)),
     explainerIndex: 0,
     promotion: null, // { targetLevel, stage: 'intrusive' | 'notif' | 'hint' }
     codeInput, attackView, morseInput, settingsOverlay,
@@ -79,6 +79,15 @@ function makeInitialState() {
 
 function makeCodeInput(kind) {
   return kind === 'sliding' ? new CodeInputSliding() : new CodeInputTree();
+}
+
+function setTitleLevelPick(n) {
+  const clamped = Math.max(1, Math.min(levelCount(), n | 0));
+  state.titleLevelPick = clamped;
+  if (state.progress.lastLevel !== clamped) {
+    state.progress.lastLevel = clamped;
+    saveProgress(state.progress);
+  }
 }
 
 function swapCodeInterface(kind) {
@@ -113,6 +122,11 @@ function onCharacterComplete(code) {
   state.codeInput.resetFlash(letter, true);
   playTransmit();
   state.attackView.setPartialWord(state.wordBuffer.join(''));
+  // Dismiss the new-letter tooltip as soon as the player successfully inputs
+  // the letter it was showing.
+  if (state.letterTooltip && state.letterTooltip.letter === letter) {
+    state.letterTooltip = null;
+  }
 }
 
 function onWordComplete() {
@@ -153,6 +167,14 @@ function startGame(fromLevel = 1) {
   state.killedLetters = new Set();
   state.seenLetters = new Set();
   state.introducedLetters = new Set();
+  // Starting mid-game means the player has implicitly "seen" the alphabet
+  // already — suppress tooltips and enable full word variety immediately.
+  if (fromLevel > 1) {
+    for (const L of ALL_LETTERS) {
+      state.seenLetters.add(L);
+      state.introducedLetters.add(L);
+    }
+  }
   state.letterTooltip = null;
   state.scoreBubbles = [];
   state.wordBuffer = [];
@@ -306,18 +328,14 @@ function updatePlay(dt) {
   state.spawnCountdown -= dt;
   const active = state.attackView.activeCount();
   const canSpawn = !state.promotion || state.promotion.stage !== 'intrusive';
-  if (canSpawn && state.spawnCountdown <= 0 && active < cfg.maxActive && state.levelElapsed < cfg.duration) {
+  if (canSpawn && state.spawnCountdown <= 0 && active < cfg.maxActive) {
     const text = pickSpawnText();
-    state.attackView.spawn(text);
+    state.attackView.spawn(text, { speedScale: speedScaleForWord(text) });
     if (text.length === 1 && !state.introducedLetters.has(text)) {
       state.introducedLetters.add(text);
-      state.letterTooltip = {
-        letter: text,
-        code: LETTER_TO_CODE[text],
-        until: performance.now() + 4000,
-      };
+      state.letterTooltip = { letter: text, code: LETTER_TO_CODE[text] };
     }
-    const [mn, mx] = cfg.spawnInterval;
+    const [mn, mx] = spawnIntervalForLevel(state.level);
     state.spawnCountdown = mn + Math.random() * (mx - mn);
   }
 
@@ -345,11 +363,6 @@ function updatePlay(dt) {
   // Advance + prune score bubbles
   for (const b of state.scoreBubbles) b.t += dt;
   state.scoreBubbles = state.scoreBubbles.filter(b => b.t < b.lifetime);
-
-  // Expire letter tooltip
-  if (state.letterTooltip && performance.now() > state.letterTooltip.until) {
-    state.letterTooltip = null;
-  }
 
   state.codeInput.update(dt);
 
@@ -386,6 +399,35 @@ function currentScore() {
   return state.enemiesDestroyed * 100 + state.level * 50;
 }
 
+// Target spawn rate in characters per minute for a level.
+function targetCpmForLevel(level) {
+  const L1 = 30, L9 = 150;
+  const n = levelCount();
+  return L1 + (L9 - L1) * ((level - 1) / Math.max(1, n - 1));
+}
+
+function avgWordLengthForLevel(level) {
+  const cfg = getLevel(level);
+  if (cfg.mode === 'letters' || !cfg.words || cfg.words.length === 0) return 1;
+  const sum = cfg.words.reduce((s, w) => s + w.length, 0);
+  const wordAvg = sum / cfg.words.length;
+  if (cfg.mode === 'mixed') return 0.4 * 1 + 0.6 * wordAvg;
+  return wordAvg;
+}
+
+function spawnIntervalForLevel(level) {
+  const cpm = targetCpmForLevel(level);
+  const avg = avgWordLengthForLevel(level);
+  const base = Math.max(1.2, 60 * avg / cpm);
+  return [base * 0.8, base * 1.2];
+}
+
+// Per-enemy speed multiplier: longer words approach slower.
+function speedScaleForWord(text) {
+  const n = Math.max(1, (text || '').length);
+  return 1 / n;
+}
+
 function textScale() {
   const v = state.settings?.textScale;
   return typeof v === 'number' && isFinite(v) ? v : 1;
@@ -393,6 +435,18 @@ function textScale() {
 
 function fs(basePx) {
   return Math.max(1, Math.round(basePx * textScale()));
+}
+
+function applySettingChange(key) {
+  if (!key) return;
+  if (key === 'volume' || key === 'reset') setVolume(state.settings.volume);
+  if (key === 'unitMs' || key === 'reset') state.morseInput.setUnit(state.settings.unitMs);
+  if (key === 'cutoff' || key === 'reset') state.morseInput.setCutoff(state.settings.cutoff);
+  if (key === 'interface' || key === 'reset') swapCodeInterface(state.settings.interface);
+  if (key === 'maxHits' || key === 'reset') {
+    if (state.scene !== 'play') state.health = state.settings.maxHits;
+    else if (state.health > state.settings.maxHits) state.health = state.settings.maxHits;
+  }
 }
 
 function setOverlay(next) {
@@ -472,20 +526,7 @@ function handleKeyDown(e) {
 
   if (state.overlay === 'settings') {
     const res = state.settingsOverlay.handleKey(e.key);
-    if (res.changed === 'volume') setVolume(state.settings.volume);
-    if (res.changed === 'unitMs') state.morseInput.setUnit(state.settings.unitMs);
-    if (res.changed === 'cutoff') state.morseInput.setCutoff(state.settings.cutoff);
-    if (res.changed === 'interface') swapCodeInterface(state.settings.interface);
-    if (res.changed === 'reset') {
-      setVolume(state.settings.volume);
-      state.morseInput.setUnit(state.settings.unitMs);
-      state.morseInput.setCutoff(state.settings.cutoff);
-      swapCodeInterface(state.settings.interface);
-    }
-    if (res.changed === 'maxHits') {
-      if (state.scene !== 'play') state.health = state.settings.maxHits;
-      else if (state.health > state.settings.maxHits) state.health = state.settings.maxHits;
-    }
+    if (res.changed) applySettingChange(res.changed);
     e.preventDefault();
     return;
   }
@@ -497,18 +538,18 @@ function handleKeyDown(e) {
       return;
     }
     if (e.key === 'ArrowLeft' || e.key === 'ArrowDown') {
-      state.titleLevelPick = Math.max(1, state.titleLevelPick - 1);
+      setTitleLevelPick(state.titleLevelPick - 1);
       e.preventDefault();
       return;
     }
     if (e.key === 'ArrowRight' || e.key === 'ArrowUp') {
       const cap = Math.min(state.progress.maxLevel || 1, levelCount());
-      state.titleLevelPick = Math.min(cap, state.titleLevelPick + 1);
+      setTitleLevelPick(Math.min(cap, state.titleLevelPick + 1));
       e.preventDefault();
       return;
     }
     if (/^[1-9]$/.test(e.key)) {
-      state.titleLevelPick = Math.min(parseInt(e.key, 10), levelCount());
+      setTitleLevelPick(parseInt(e.key, 10));
       e.preventDefault();
       return;
     }
@@ -516,9 +557,9 @@ function handleKeyDown(e) {
   }
 
   if (state.scene === 'dead') {
-    if (e.key === ' ' || e.key === 'Enter') {
+    // Space no longer dismisses — only Enter (or the Continue button).
+    if (e.key === 'Enter') {
       state.scene = 'title';
-      state.titleLevelPick = 1;
     }
     e.preventDefault();
     return;
@@ -613,12 +654,12 @@ function handlePointerDown(e) {
   if (state.scene === 'title' && !state.overlay) {
     const arrows = titleArrowRects(canvas.width, canvas.height);
     if (pointInRect(px, py, arrows.left)) {
-      state.titleLevelPick = Math.max(1, state.titleLevelPick - 1);
+      setTitleLevelPick(state.titleLevelPick - 1);
       return;
     }
     if (pointInRect(px, py, arrows.right)) {
       const cap = Math.min(state.progress.maxLevel || 1, levelCount());
-      state.titleLevelPick = Math.min(cap, state.titleLevelPick + 1);
+      setTitleLevelPick(Math.min(cap, state.titleLevelPick + 1));
       return;
     }
   }
@@ -629,11 +670,26 @@ function handlePointerDown(e) {
       state.explainerIndex = (state.explainerIndex + 1) % EXPLAINER_COUNT;
       return;
     }
+    if (state.overlay === 'settings') {
+      const res = state.settingsOverlay.handlePointer(px, py, { x: 0, y: 0, w: canvas.width, h: canvas.height });
+      if (res === null) {
+        // Outside the modal — dismiss.
+        setOverlay(null);
+      } else if (res.changed) {
+        applySettingChange(res.changed);
+      }
+      return;
+    }
     setOverlay(null);
     return;
   }
   if (state.scene === 'title') { startGame(state.titleLevelPick); return; }
-  if (state.scene === 'dead') { state.scene = 'title'; state.titleLevelPick = 1; return; }
+  if (state.scene === 'dead') {
+    // Only allow dismissal via the explicit Continue button.
+    const r = continueButtonRect(canvas.width, canvas.height);
+    if (pointInRect(px, py, r)) state.scene = 'title';
+    return;
+  }
   if (state.scene === 'play') {
     if (state.paused) { togglePause(); return; }
     state.morseInput.pressStart();
@@ -685,6 +741,7 @@ export function draw(options = {}) {
 
   if (state.scene === 'dead' && state.lastRun) {
     drawLeaderboard(ctx, { x: 0, y: 0, w: W, h: H }, state.lastRun);
+    drawButton(continueButtonRect(W, H), 'Continue  ↵', false);
   }
 
   if (state.overlay === 'help') {
@@ -975,17 +1032,6 @@ function drawHud(W, H, layout) {
     layout.radar.x + layout.radar.w / 2,
     layout.radar.y + layout.radar.h - Math.round(8 * sc)
   );
-
-  if (state.settings.showUnit) {
-    ctx.textAlign = 'left';
-    ctx.textBaseline = 'bottom';
-    ctx.fillStyle = 'rgba(180, 255, 200, 0.8)';
-    ctx.font = `${fs(11)}px monospace`;
-    ctx.fillText(
-      `unit ${Math.round(state.morseInput.getUnit())} ms  cutoff ${state.settings.cutoff.toFixed(2)}`,
-      Math.round(12 * sc), H - Math.round(10 * sc)
-    );
-  }
 }
 
 // HUD button rectangles — chained right-to-left so spacing stays tight at
@@ -1001,6 +1047,17 @@ function settingsButtonRect(W) {
   const pr = pauseButtonRect(W);
   return { x: pr.x - Math.round(4 * s) - w, y: Math.round(8 * s), w, h };
 }
+function continueButtonRect(W, H) {
+  const bw = Math.round(220 * textScale() * 0.8);
+  const bh = Math.round(40 * textScale() * 0.8);
+  // Sit inside the leaderboard modal's footer.
+  const mw = Math.min(W * 0.8, 560);
+  const mh = Math.min(H * 0.8, 460);
+  const mx = (W - mw) / 2;
+  const my = (H - mh) / 2;
+  return { x: mx + (mw - bw) / 2, y: my + mh - bh - 14, w: bw, h: bh };
+}
+
 function helpButtonRect(W) {
   const s = textScale();
   const w = Math.round(72 * s), h = Math.round(30 * s);
@@ -1058,25 +1115,22 @@ function drawBanner(W, H, msg) {
 function drawLetterTooltip(W, H, layout) {
   const t = state.letterTooltip;
   if (!t) return;
-  const remaining = t.until - performance.now();
-  const alpha = remaining > 500 ? 1 : Math.max(0, remaining / 500);
 
   const cx = layout.radar.x + layout.radar.w / 2;
-  const cy = layout.radar.y + Math.max(56, layout.radar.h * 0.14);
-  // Tooltip size — smaller than before; still scales a bit with screen.
+  const cy = layout.radar.y + Math.max(110, layout.radar.h * 0.18);
   const size = Math.min(W, H) * 0.055;
   const text = `${t.letter}  =  ${t.code}`;
   ctx.save();
-  ctx.globalAlpha = alpha;
   ctx.font = `bold ${Math.round(size)}px monospace`;
   ctx.textAlign = 'center';
   ctx.textBaseline = 'middle';
   const metrics = ctx.measureText(text);
   const boxW = metrics.width + Math.round(size * 0.8);
   const boxH = size * 1.55;
-  ctx.fillStyle = 'rgba(6, 20, 10, 0.92)';
+  // Translucent backdrop so gameplay is still visible behind the tip.
+  ctx.fillStyle = 'rgba(6, 20, 10, 0.55)';
   ctx.fillRect(cx - boxW / 2, cy - boxH / 2, boxW, boxH);
-  ctx.strokeStyle = '#ffd070';
+  ctx.strokeStyle = 'rgba(255, 208, 112, 0.8)';
   ctx.lineWidth = 2;
   ctx.strokeRect(cx - boxW / 2 + 1, cy - boxH / 2 + 1, boxW - 2, boxH - 2);
   ctx.fillStyle = '#ffd070';
@@ -1152,17 +1206,26 @@ function promotionModalButtons(W, H) {
 }
 
 function promotionNotifRect(W, H) {
-  const nw = Math.min(W * 0.5, 420);
-  const nh = 72;
-  const nx = W - nw - 16;
-  const ny = 54;
-  return { x: nx, y: ny, w: nw, h: nh };
+  // Locked to the bottom-right corner so it can't cover the radar sweep,
+  // tower, enemies, or the code panel. Sized compact enough to sit above
+  // the tape strip and the persistent transmit hint line.
+  const s = textScale();
+  const nw = Math.round(280 * s * 0.8);
+  const nh = Math.round(66 * s * 0.8);
+  const tapeH = Math.max(62, Math.min(96, Math.round(H * 0.1)));
+  const reserve = tapeH + Math.round(34 * s); // clearance for the transmit hint
+  const margin = Math.round(12 * s);
+  return { x: W - nw - margin, y: H - reserve - nh - margin, w: nw, h: nh };
 }
 
 function promotionHintRect(W, H) {
-  const nw = 240;
-  const nh = 28;
-  return { x: W - nw - 12, y: 84, w: nw, h: nh };
+  const s = textScale();
+  const nw = Math.round(220 * s * 0.8);
+  const nh = Math.round(30 * s * 0.8);
+  const tapeH = Math.max(62, Math.min(96, Math.round(H * 0.1)));
+  const reserve = tapeH + Math.round(34 * s);
+  const margin = Math.round(12 * s);
+  return { x: W - nw - margin, y: H - reserve - nh - margin, w: nw, h: nh };
 }
 
 function drawPromotion(W, H, layout) {
@@ -1231,40 +1294,42 @@ function drawPromotionIntrusive(W, H, fromRank, toRank, targetLevel) {
 
 function drawPromotionNotif(W, H, toRank, targetLevel) {
   const r = promotionNotifRect(W, H);
+  const insigSz = Math.round(r.h * 0.55);
   ctx.save();
-  ctx.fillStyle = 'rgba(10, 28, 15, 0.92)';
+  ctx.fillStyle = 'rgba(10, 28, 15, 0.94)';
   ctx.fillRect(r.x, r.y, r.w, r.h);
   ctx.strokeStyle = '#ffd070';
   ctx.lineWidth = 1.5;
   ctx.strokeRect(r.x + 0.5, r.y + 0.5, r.w - 1, r.h - 1);
-  drawInsignia(ctx, r.x + 22, r.y + r.h / 2, 32, targetLevel);
+  drawInsignia(ctx, r.x + Math.round(insigSz * 0.75), r.y + r.h / 2, insigSz, targetLevel);
+  const textX = r.x + Math.round(insigSz * 1.3) + 6;
   ctx.fillStyle = '#ffd070';
-  ctx.font = 'bold 14px monospace';
+  ctx.font = `bold ${fs(12)}px monospace`;
   ctx.textAlign = 'left';
   ctx.textBaseline = 'top';
-  ctx.fillText('PROMOTION AVAILABLE', r.x + 52, r.y + 10);
+  ctx.fillText('PROMOTION', textX, r.y + Math.round(r.h * 0.14));
   ctx.fillStyle = '#eaffe1';
-  ctx.font = '13px monospace';
-  ctx.fillText(`Rank up to ${toRank}`, r.x + 52, r.y + 28);
+  ctx.font = `${fs(12)}px monospace`;
+  ctx.fillText(`→ ${toRank}`, textX, r.y + Math.round(r.h * 0.44));
   ctx.fillStyle = 'rgba(200, 255, 210, 0.75)';
-  ctx.font = '11px monospace';
-  ctx.fillText('ENTER or click to accept · Del to dismiss', r.x + 52, r.y + 48);
+  ctx.font = `${fs(10)}px monospace`;
+  ctx.fillText('ENTER / click: accept  ·  Del: later', textX, r.y + Math.round(r.h * 0.72));
   ctx.restore();
 }
 
 function drawPromotionHint(W, H, toRank) {
   const r = promotionHintRect(W, H);
   ctx.save();
-  ctx.fillStyle = 'rgba(60, 40, 10, 0.85)';
+  ctx.fillStyle = 'rgba(60, 40, 10, 0.9)';
   ctx.fillRect(r.x, r.y, r.w, r.h);
   ctx.strokeStyle = '#ffd070';
   ctx.lineWidth = 1;
   ctx.strokeRect(r.x + 0.5, r.y + 0.5, r.w - 1, r.h - 1);
   ctx.fillStyle = '#ffe8b0';
-  ctx.font = 'bold 11px monospace';
+  ctx.font = `bold ${fs(10)}px monospace`;
   ctx.textAlign = 'center';
   ctx.textBaseline = 'middle';
-  ctx.fillText(`ENTER → promote to ${toRank}`, r.x + r.w / 2, r.y + r.h / 2);
+  ctx.fillText(`ENTER → ${toRank}`, r.x + r.w / 2, r.y + r.h / 2);
   ctx.restore();
 }
 
