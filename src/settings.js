@@ -5,6 +5,7 @@ export const DEFAULTS = Object.freeze({
   unitMs: 100,
   cutoff: 0.8,
   volume: 0.35,
+  musicVolume: 0.3,
   interface: 'tree', // 'tree' | 'sliding'
   textScale: 1.75,
 });
@@ -33,7 +34,8 @@ const ITEMS = [
   { key: 'unitMs',  label: 'Unit duration',         min: 40, max: 400, step: 10, fmt: v => `${v} ms` },
   { key: 'cutoff',  label: 'Threshold cutoff',      min: 0.5, max: 1.0, step: 0.05, fmt: v => `${v.toFixed(2)}` },
   { key: 'textScale', label: 'Text size',           min: 1.0, max: 3.0, step: 0.25, fmt: v => `${v.toFixed(2)}×` },
-  { key: 'volume',  label: 'Master volume',         min: 0, max: 1,  step: 0.05, fmt: v => `${Math.round(v * 100)}%` },
+  { key: 'volume',      label: 'Sound effects volume', min: 0, max: 1, step: 0.05, fmt: v => `${Math.round(v * 100)}%` },
+  { key: 'musicVolume', label: 'Music volume',    min: 0, max: 1, step: 0.05, fmt: v => `${Math.round(v * 100)}%` },
 ];
 
 export class SettingsOverlay {

@@ -21,11 +21,59 @@ function ensureCtx() {
 export function resumeAudio() {
   const c = ensureCtx();
   if (c && c.state === 'suspended') c.resume().catch(() => {});
+  playMusic();
+}
+
+// ---------- background music ----------
+let music = null;
+let musicVolume = 0.3;
+let musicWanted = true;
+
+function ensureMusic() {
+  if (music) return music;
+  if (typeof Audio === 'undefined') return null;
+  try {
+    const url = new URL('./04 Ritualistic.mp3', import.meta.url).href;
+    music = new Audio(url);
+    music.loop = true;
+    music.volume = musicVolume;
+    music.preload = 'auto';
+  } catch (_) {
+    music = null;
+  }
+  return music;
+}
+
+export function setMusicVolume(v) {
+  const clamped = Math.max(0, Math.min(1, v));
+  musicVolume = clamped * clamped;
+  if (music) music.volume = musicVolume;
+}
+
+export function playMusic() {
+  if (!musicWanted) return;
+  const m = ensureMusic();
+  if (!m) return;
+  if (!m.paused) return;
+  m.play().catch(() => {}); // browsers block autoplay until user interacts
+}
+
+export function pauseMusic() {
+  musicWanted = false;
+  if (music) music.pause();
+}
+
+export function resumeMusicPlayback() {
+  musicWanted = true;
+  playMusic();
 }
 
 export function setVolume(v) {
   if (!master) ensureCtx();
-  if (master) master.gain.value = Math.max(0, Math.min(1, v));
+  if (master) {
+    const clamped = Math.max(0, Math.min(1, v));
+    master.gain.value = clamped * clamped;
+  }
 }
 
 // Morse beep: starts a tone at the keying frequency; call stopMorseTone() to end.

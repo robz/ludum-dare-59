@@ -18,6 +18,7 @@ function parseArgs(argv) {
     else if (a === '--seed') out.seed = parseInt(argv[++i], 10);
     else if (a === '--scene') out.scene = argv[++i];
     else if (a === '--overlay') out.overlay = argv[++i];
+    else if (a === '--credits') out.overlay = 'credits';
     else if (a === '--level') out.level = parseInt(argv[++i], 10);
     else if (a === '--ticks') out.ticks = parseInt(argv[++i], 10);
     else if (a === '--enemies') out.enemies = argv[++i].split(',').filter(Boolean);

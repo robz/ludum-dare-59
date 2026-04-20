@@ -18,7 +18,7 @@ import { LEVELS, getLevel, levelCount } from './levels.js';
 import { ALL_LETTERS, LETTER_TO_CODE, parentLetter, codeToLetter } from './morse.js';
 import { RANKS, rankFor, drawInsignia } from './ranks.js';
 import {
-  resumeAudio, setVolume,
+  resumeAudio, setVolume, setMusicVolume, playMusic,
   startMorseTone, stopMorseTone,
   playFire, playExplosion, playDamage, playError, playTransmit,
 } from './sound.js';
@@ -46,6 +46,7 @@ function makeInitialState() {
   });
   const settingsOverlay = new SettingsOverlay(settings);
   setVolume(settings.volume);
+  setMusicVolume(settings.musicVolume ?? 0.3);
 
   return {
     scene: 'title',
@@ -69,6 +70,7 @@ function makeInitialState() {
     wordBuffer: [],
     invalidBanner: null,
     titleLevelPick: Math.max(1, Math.min(levelCount(), progress.lastLevel || 1)),
+    creditLinks: [],
     explainerIndex: 0,
     promotion: null, // { targetLevel, stage: 'intrusive' | 'notif' | 'hint' }
     codeInput, attackView, morseInput, settingsOverlay,
@@ -486,6 +488,7 @@ function fs(basePx) {
 function applySettingChange(key) {
   if (!key) return;
   if (key === 'volume' || key === 'reset') setVolume(state.settings.volume);
+  if (key === 'musicVolume' || key === 'reset') setMusicVolume(state.settings.musicVolume);
   if (key === 'unitMs' || key === 'reset') state.morseInput.setUnit(state.settings.unitMs);
   if (key === 'cutoff' || key === 'reset') state.morseInput.setCutoff(state.settings.cutoff);
   if (key === 'interface' || key === 'reset') swapCodeInterface(state.settings.interface);
@@ -513,11 +516,19 @@ const HOTKEYS = new Set([' ', 'h', 'H', 's', 'S', 'p', 'P', 'q', 'Q', 'Escape', 
                           'ArrowUp', 'ArrowDown', 'ArrowLeft', 'ArrowRight']);
 for (let i = 1; i <= 9; i++) HOTKEYS.add(String(i));
 
+let zHeld = false;
+
 function handleKeyDown(e) {
   // Don't consume browser/OS shortcut chords — let Cmd-R, Ctrl-T, Alt-Tab,
   // etc. fall through untouched.
   if (e.ctrlKey || e.metaKey || e.altKey) return;
   resumeAudio();
+
+  if (e.key === 'z' || e.key === 'Z') {
+    zHeld = true;
+    e.preventDefault();
+    return;
+  }
 
   // Promotion dialog input — takes priority over everything else.
   if (state.promotion) {
@@ -621,7 +632,7 @@ function handleKeyDown(e) {
     e.preventDefault();
     return;
   }
-  if (/^[1-9]$/.test(e.key)) {
+  if (zHeld && /^[1-9]$/.test(e.key)) {
     const n = parseInt(e.key, 10);
     if (n >= 1 && n <= levelCount()) {
       state.level = n;
@@ -653,6 +664,7 @@ function handleKeyDown(e) {
 }
 
 function handleKeyUp(e) {
+  if (e.key === 'z' || e.key === 'Z') zHeld = false;
   if (e.ctrlKey || e.metaKey || e.altKey) return;
   if (state.scene !== 'play' || state.paused) return;
   if (e.key === ' ') {
@@ -684,10 +696,11 @@ function handlePointerDown(e) {
     }
   }
 
-  // HUD buttons (help, settings, pause)
+  // HUD buttons (help, settings, pause, credits)
   const hRect = helpButtonRect(canvas.width);
   const sRect = settingsButtonRect(canvas.width);
   const pRect = pauseButtonRect(canvas.width);
+  const cRect = creditsButtonRect(canvas.width);
   if (state.scene !== 'dead') {
     if (pointInRect(px, py, hRect)) {
       setOverlay(state.overlay === 'help' ? null : 'help');
@@ -695,6 +708,10 @@ function handlePointerDown(e) {
     }
     if (pointInRect(px, py, sRect)) {
       setOverlay(state.overlay === 'settings' ? null : 'settings');
+      return;
+    }
+    if (state.scene === 'title' && pointInRect(px, py, cRect)) {
+      setOverlay(state.overlay === 'credits' ? null : 'credits');
       return;
     }
   }
@@ -721,6 +738,18 @@ function handlePointerDown(e) {
     if (state.overlay === 'help') {
       // Click on help modal cycles to next variant.
       state.explainerIndex = (state.explainerIndex + 1) % EXPLAINER_COUNT;
+      return;
+    }
+    if (state.overlay === 'credits') {
+      for (const link of state.creditLinks || []) {
+        if (pointInRect(px, py, link.rect)) {
+          if (typeof window !== 'undefined' && window.open) {
+            window.open(link.url, '_blank', 'noopener');
+          }
+          return;
+        }
+      }
+      setOverlay(null);
       return;
     }
     if (state.overlay === 'settings') {
@@ -806,6 +835,8 @@ export function draw(options = {}) {
     });
   } else if (state.overlay === 'settings') {
     state.settingsOverlay.draw(ctx, { x: 0, y: 0, w: W, h: H });
+  } else if (state.overlay === 'credits') {
+    state.creditLinks = drawCredits(W, H);
   }
 
   if (state.invalidBanner) drawBanner(W, H, state.invalidBanner.msg);
@@ -1003,6 +1034,7 @@ function drawTitle(W, H) {
   ctx.textBaseline = 'middle';
   ctx.fillText('H help · S settings · ←/→ level', cx, H * 0.92);
 
+  drawButton(creditsButtonRect(W), 'Credits', state.overlay === 'credits');
   drawButton(helpButtonRect(W), 'Help', state.overlay === 'help');
   drawButton(settingsButtonRect(W), 'Settings', state.overlay === 'settings');
 }
@@ -1100,6 +1132,116 @@ function settingsButtonRect(W) {
   const pr = pauseButtonRect(W);
   return { x: pr.x - Math.round(4 * s) - w, y: Math.round(8 * s), w, h };
 }
+function creditsButtonRect(W) {
+  const s = textScale();
+  const w = Math.round(96 * s), h = Math.round(30 * s);
+  const hr = helpButtonRect(W);
+  return { x: hr.x - Math.round(4 * s) - w, y: Math.round(8 * s), w, h };
+}
+
+function drawCredits(W, H) {
+  const mw = Math.min(W * 0.86, 720);
+  const mh = Math.min(H * 0.86, 540);
+  const mx = (W - mw) / 2;
+  const my = (H - mh) / 2;
+
+  ctx.save();
+  ctx.fillStyle = 'rgba(0, 10, 5, 0.82)';
+  ctx.fillRect(0, 0, W, H);
+  ctx.fillStyle = 'rgba(6, 20, 10, 0.96)';
+  ctx.fillRect(mx, my, mw, mh);
+  ctx.strokeStyle = '#4eff6d';
+  ctx.lineWidth = 1;
+  ctx.strokeRect(mx + 0.5, my + 0.5, mw - 1, mh - 1);
+
+  ctx.fillStyle = '#b6ffc4';
+  ctx.font = 'bold 24px monospace';
+  ctx.textAlign = 'center';
+  ctx.textBaseline = 'top';
+  ctx.fillText('CREDITS', mx + mw / 2, my + 18);
+
+  const pad = 32;
+  const lineH = 24;
+  let y = my + 72;
+  const links = [];
+
+  // Creators line
+  ctx.fillStyle = '#eaffe1';
+  ctx.font = 'bold 17px monospace';
+  ctx.fillText('Created by robz and zenithstar', mx + mw / 2, y);
+  y += lineH + 4;
+
+  ctx.font = '14px monospace';
+  ctx.fillStyle = '#a7cfff';
+  links.push(drawLinkLine(mx + mw / 2, y, 'https://robbzz.itch.io/'));
+  y += lineH - 2;
+  links.push(drawLinkLine(mx + mw / 2, y, 'https://xenithstar.itch.io/'));
+  y += lineH + 18;
+
+  ctx.fillStyle = '#eaffe1';
+  ctx.font = '15px monospace';
+  ctx.fillText('With special thanks to ainurcy and aml2732', mx + mw / 2, y);
+  y += lineH + 18;
+
+  // Music attribution (multi-line)
+  ctx.fillStyle = '#ffd070';
+  ctx.font = 'bold 15px monospace';
+  ctx.fillText('Ambient tracks by Jeremy Leaird-Koch', mx + mw / 2, y);
+  y += lineH - 2;
+  ctx.fillStyle = '#eaffe1';
+  ctx.font = '13px monospace';
+  ctx.fillText('licensed under a CC BY-NC license.', mx + mw / 2, y);
+  y += lineH + 6;
+
+  // Source + Artist lines with inline clickable URLs
+  links.push(drawLabeledLink(mx + mw / 2, y, 'Source:', 'https://jjbbllkk.itch.io/'));
+  y += lineH;
+  links.push(drawLabeledLink(mx + mw / 2, y, 'Artist:', 'https://rmr.media/'));
+  y += lineH;
+
+  ctx.fillStyle = 'rgba(180, 255, 200, 0.7)';
+  ctx.font = '12px monospace';
+  ctx.fillText('click a link to open it   ·   ESC to close', mx + mw / 2, my + mh - 26);
+
+  ctx.restore();
+  return links;
+}
+
+function drawLinkLine(cx, y, url) {
+  ctx.save();
+  ctx.fillStyle = '#a7cfff';
+  ctx.font = '14px monospace';
+  ctx.textAlign = 'center';
+  ctx.textBaseline = 'top';
+  const metrics = ctx.measureText(url);
+  const w = metrics.width;
+  const lx = cx - w / 2;
+  ctx.fillText(url, cx, y);
+  // underline
+  ctx.fillRect(lx, y + 16, w, 1);
+  ctx.restore();
+  return { rect: { x: lx - 4, y: y - 2, w: w + 8, h: 20 }, url };
+}
+
+function drawLabeledLink(cx, y, label, url) {
+  ctx.save();
+  ctx.font = '14px monospace';
+  ctx.textAlign = 'left';
+  ctx.textBaseline = 'top';
+  const labelText = `${label} `;
+  const labelW = ctx.measureText(labelText).width;
+  const urlW = ctx.measureText(url).width;
+  const total = labelW + urlW;
+  const startX = cx - total / 2;
+  ctx.fillStyle = '#eaffe1';
+  ctx.fillText(labelText, startX, y);
+  ctx.fillStyle = '#a7cfff';
+  ctx.fillText(url, startX + labelW, y);
+  ctx.fillRect(startX + labelW, y + 16, urlW, 1);
+  ctx.restore();
+  return { rect: { x: startX + labelW - 4, y: y - 2, w: urlW + 8, h: 20 }, url };
+}
+
 function continueButtonRect(W, H) {
   const bw = Math.round(220 * textScale() * 0.8);
   const bh = Math.round(40 * textScale() * 0.8);
