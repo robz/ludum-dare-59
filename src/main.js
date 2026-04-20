@@ -63,6 +63,7 @@ function makeInitialState() {
     killedLetters: new Set(),
     seenLetters: new Set(),
     introducedLetters: new Set(),
+    spawnCount: new Map(),
     letterTooltip: null,
     scoreBubbles: [],
     wordBuffer: [],
@@ -167,6 +168,7 @@ function startGame(fromLevel = 1) {
   state.killedLetters = new Set();
   state.seenLetters = new Set();
   state.introducedLetters = new Set();
+  state.spawnCount = new Map();
   // Starting mid-game means the player has implicitly "seen" the alphabet
   // already — suppress tooltips and enable full word variety immediately.
   if (fromLevel > 1) {
@@ -280,10 +282,48 @@ function letterAllowed(l) {
   return true;
 }
 
+function letterWeight(letter) {
+  // Heavily favor letters the player hasn't been shown yet so variety comes
+  // in fast at the start of each level; otherwise taper weight as the letter
+  // is spawned more often.
+  if (!state.introducedLetters.has(letter)) return 12;
+  const spawned = state.spawnCount.get(letter) || 0;
+  return 1 / (1 + spawned);
+}
+
+function weightedPick(items, weights) {
+  let total = 0;
+  for (const w of weights) total += w;
+  if (total <= 0) return items[items.length - 1];
+  let r = Math.random() * total;
+  for (let i = 0; i < items.length; i++) {
+    r -= weights[i];
+    if (r <= 0) return items[i];
+  }
+  return items[items.length - 1];
+}
+
 function pickAvailableLetter() {
   const pool = ALL_LETTERS.filter(letterAllowed);
   if (pool.length === 0) return 'E';
-  return pool[Math.floor(Math.random() * pool.length)];
+  const weights = pool.map(letterWeight);
+  return weightedPick(pool, weights);
+}
+
+function wordWeight(word) {
+  // Rare words + words containing rarely-seen letters score highest.
+  const spawned = state.spawnCount.get(word) || 0;
+  const rarityBonus = [...word].reduce((acc, c) => {
+    const s = state.spawnCount.get(c) || 0;
+    return acc + 1 / (1 + s);
+  }, 0) / word.length;
+  return (1 / (1 + spawned)) * (0.5 + rarityBonus);
+}
+
+function pickFromWords(words) {
+  if (!words || words.length === 0) return null;
+  const weights = words.map(wordWeight);
+  return weightedPick(words, weights);
 }
 
 function pickSpawnText() {
@@ -296,11 +336,11 @@ function pickSpawnText() {
     if (cfg.mode === 'mixed') {
       candidate = (Math.random() < 0.4 || words.length === 0)
         ? pickAvailableLetter()
-        : words[Math.floor(Math.random() * words.length)];
+        : (pickFromWords(words) ?? pickAvailableLetter());
     } else {
       candidate = words.length === 0
         ? pickAvailableLetter()
-        : words[Math.floor(Math.random() * words.length)];
+        : (pickFromWords(words) ?? pickAvailableLetter());
     }
   }
   // Word gating: only spawn a multi-letter word if every letter has been seen.
@@ -310,8 +350,12 @@ function pickSpawnText() {
       candidate = unseen[Math.floor(Math.random() * unseen.length)];
     }
   }
-  // Record seen letters.
+  // Record seen letters + spawn-count (both the whole text and each letter).
   for (const c of candidate) state.seenLetters.add(c);
+  state.spawnCount.set(candidate, (state.spawnCount.get(candidate) || 0) + 1);
+  for (const c of candidate) {
+    if (c !== candidate) state.spawnCount.set(c, (state.spawnCount.get(c) || 0) + 1);
+  }
   return candidate;
 }
 
@@ -370,8 +414,10 @@ function updatePlay(dt) {
     state.invalidBanner = null;
   }
 
-  // Level advance → promotion trigger
-  if (!state.promotion && state.levelElapsed >= cfg.duration && state.attackView.activeCount() === 0) {
+  // Level advance → promotion trigger. We used to also wait for the radar
+  // to be clear, but spawning now continues past the timer, so that would
+  // keep the trigger from ever firing. Fire it purely on the elapsed clock.
+  if (!state.promotion && state.levelElapsed >= cfg.duration) {
     triggerPromotion();
   }
 }
@@ -462,7 +508,7 @@ function setOverlay(next) {
 
 // ---------- input ----------
 
-const HOTKEYS = new Set([' ', 'h', 'H', 's', 'S', 'p', 'P', 'Escape', 'Enter',
+const HOTKEYS = new Set([' ', 'h', 'H', 's', 'S', 'p', 'P', 'q', 'Q', 'Escape', 'Enter',
                           'Backspace', 'Delete',
                           'ArrowUp', 'ArrowDown', 'ArrowLeft', 'ArrowRight']);
 for (let i = 1; i <= 9; i++) HOTKEYS.add(String(i));
@@ -584,9 +630,16 @@ function handleKeyDown(e) {
       state.destroyCount = new Map();
       state.killedLetters = new Set();
       state.seenLetters = new Set();
+      state.spawnCount = new Map();
       state.attackView = new AttackView({ enemySpeed: getLevel(n).enemySpeed });
       state.spawnCountdown = 0.3;
     }
+    e.preventDefault();
+    return;
+  }
+  if (e.key === 'q' || e.key === 'Q') {
+    // Debug: force a promotion to appear.
+    if (!state.promotion) triggerPromotion();
     e.preventDefault();
     return;
   }
@@ -1275,7 +1328,21 @@ function drawPromotionIntrusive(W, H, fromRank, toRank, targetLevel) {
   ctx.fillText('Declining lets you stay at your current rank;', r.x + r.w / 2, r.y + 214);
   ctx.fillText('press ENTER any time to accept the promotion.', r.x + r.w / 2, r.y + 232);
 
-  drawButton(btns.accept, 'Accept (Enter)', true);
+  // Accept button — styled to match the Decline label below (unscaled 15px
+  // bold monospace) for visual parity.
+  ctx.save();
+  ctx.fillStyle = 'rgba(120, 255, 160, 0.4)';
+  ctx.strokeStyle = '#d0ffd8';
+  ctx.lineWidth = 1;
+  ctx.fillRect(btns.accept.x, btns.accept.y, btns.accept.w, btns.accept.h);
+  ctx.strokeRect(btns.accept.x + 0.5, btns.accept.y + 0.5, btns.accept.w - 1, btns.accept.h - 1);
+  ctx.fillStyle = '#eaffe1';
+  ctx.font = 'bold 15px monospace';
+  ctx.textAlign = 'center';
+  ctx.textBaseline = 'middle';
+  ctx.fillText('Accept (Enter)', btns.accept.x + btns.accept.w / 2, btns.accept.y + btns.accept.h / 2 + 1);
+  ctx.restore();
+
   // Decline button styled amber
   ctx.save();
   ctx.fillStyle = 'rgba(60, 28, 10, 0.9)';
