@@ -7,6 +7,7 @@ export const DEFAULTS = Object.freeze({
   volume: 0.35,
   showUnit: true,
   interface: 'tree', // 'tree' | 'sliding'
+  textScale: 2.0,
 });
 
 const STORAGE_KEY = 'morse-settings-v1';
@@ -30,8 +31,9 @@ export function saveSettings(s) {
 const ITEMS = [
   { key: 'interface', label: 'Code interface', options: ['tree', 'sliding'], fmt: v => v.toUpperCase() },
   { key: 'maxHits', label: 'Hits required to die', min: 1, max: 10, step: 1, fmt: v => `${v}` },
-  { key: 'unitMs',  label: 'Initial unit duration', min: 60, max: 400, step: 10, fmt: v => `${v} ms` },
+  { key: 'unitMs',  label: 'Unit duration',         min: 40, max: 400, step: 10, fmt: v => `${v} ms` },
   { key: 'cutoff',  label: 'Threshold cutoff',      min: 0.5, max: 1.0, step: 0.05, fmt: v => `${v.toFixed(2)}` },
+  { key: 'textScale', label: 'Text size',           min: 1.0, max: 3.0, step: 0.25, fmt: v => `${v.toFixed(2)}×` },
   { key: 'volume',  label: 'Master volume',         min: 0, max: 1,  step: 0.05, fmt: v => `${Math.round(v * 100)}%` },
   { key: 'showUnit',label: 'Show unit (debug HUD)', toggle: true, fmt: v => v ? 'ON' : 'OFF' },
 ];

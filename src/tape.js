@@ -4,7 +4,6 @@
 // stamped at the time each character was recognised.
 
 const WINDOW_UNITS = 50;
-const LABEL_GAP = 16;
 
 export function drawTape(ctx, rect, morseInput, { now, referenceUnit = 100 } = {}) {
   const { x, y, w, h } = rect;
@@ -21,9 +20,9 @@ export function drawTape(ctx, rect, morseInput, { now, referenceUnit = 100 } = {
   ctx.lineWidth = 1;
   ctx.strokeRect(x + 0.5, y + 0.5, w - 1, h - 1);
 
-  // Track fills the panel from just below the label to the bottom edge.
-  const trackTop = y + LABEL_GAP;
-  const trackBottom = y + h - 2;
+  // Track fills the entire panel.
+  const trackTop = y + 3;
+  const trackBottom = y + h - 3;
   const trackH = trackBottom - trackTop;
 
   const history = morseInput.getHistory();
@@ -65,13 +64,6 @@ export function drawTape(ctx, rect, morseInput, { now, referenceUnit = 100 } = {
   // Right-edge "now" seam.
   ctx.fillStyle = 'rgba(200, 255, 210, 0.45)';
   ctx.fillRect(x + w - 1, trackTop, 1, trackH);
-
-  // Label in the top-left corner.
-  ctx.fillStyle = 'rgba(140, 255, 170, 0.55)';
-  ctx.font = '10px monospace';
-  ctx.textAlign = 'left';
-  ctx.textBaseline = 'top';
-  ctx.fillText('TIMELINE', x + 6, y + 3);
 
   ctx.restore();
 }

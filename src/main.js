@@ -205,16 +205,18 @@ function declinePromotion() {
 function die() {
   const destroyed = state.enemiesDestroyed;
   const cpm = state.gameElapsed > 0 ? (state.charsSent * 60) / state.gameElapsed : 0;
-  const newHigh = cpm > (state.progress.highScore || 0);
-  if (newHigh) state.progress.highScore = cpm;
+  const score = currentScore();
+  const newHigh = score > (state.progress.highScore || 0);
+  if (newHigh) state.progress.highScore = score;
   state.progress.maxLevel = Math.max(state.progress.maxLevel || 1, state.levelReached);
-  const ranking = recordScore(state.progress, cpm);
+  const ranking = recordScore(state.progress, score);
   saveProgress(state.progress);
   state.lastRun = {
     destroyed,
     charsSent: state.charsSent,
     survivedSec: state.gameElapsed,
     cpm,
+    score,
     levelReached: state.levelReached,
     highScore: state.progress.highScore || 0,
     newHighScore: newHigh,
@@ -333,8 +335,10 @@ function updatePlay(dt) {
         if (txt.length === 1) {
           state.destroyCount.set(txt, (state.destroyCount.get(txt) || 0) + 1);
         }
-        spawnScoreBubble(txt);
       }
+    }
+    if (r.destroyedEvents) {
+      for (const ev of r.destroyedEvents) spawnScoreBubble(ev);
     }
   }
 
@@ -359,18 +363,36 @@ function updatePlay(dt) {
   }
 }
 
-function spawnScoreBubble(text) {
-  // Bubble appears near the DESTROYED counter and floats upward.
-  const points = text.length * 10;
+function spawnScoreBubble(event) {
+  // Bubble appears at the radar-space location of the scoring event (enemy
+  // death) and floats upward as it fades.
+  const text = typeof event === 'string' ? event : event.text;
+  const pts = pointsFor(text);
   state.scoreBubbles.push({
-    text: `+${points}`,
-    // We don't know canvas dims here cheaply; store relative coordinates and
-    // resolve at draw time. Use sentinel x=-1 to mean "right edge".
-    x: -1,
-    y: 80,
+    text: `+${pts}`,
+    nx: event?.nx ?? 0,
+    ny: event?.ny ?? 0,
     t: 0,
     lifetime: 1.4,
   });
+}
+
+function pointsFor(text) {
+  // Match the v3 scoring: longer words yield more points (10 per character).
+  return (text || '').length * 10;
+}
+
+function currentScore() {
+  return state.enemiesDestroyed * 100 + state.level * 50;
+}
+
+function textScale() {
+  const v = state.settings?.textScale;
+  return typeof v === 'number' && isFinite(v) ? v : 1;
+}
+
+function fs(basePx) {
+  return Math.max(1, Math.round(basePx * textScale()));
 }
 
 function setOverlay(next) {
@@ -392,6 +414,9 @@ const HOTKEYS = new Set([' ', 'h', 'H', 's', 'S', 'p', 'P', 'Escape', 'Enter',
 for (let i = 1; i <= 9; i++) HOTKEYS.add(String(i));
 
 function handleKeyDown(e) {
+  // Don't consume browser/OS shortcut chords — let Cmd-R, Ctrl-T, Alt-Tab,
+  // etc. fall through untouched.
+  if (e.ctrlKey || e.metaKey || e.altKey) return;
   resumeAudio();
 
   // Promotion dialog input — takes priority over everything else.
@@ -534,6 +559,7 @@ function handleKeyDown(e) {
 }
 
 function handleKeyUp(e) {
+  if (e.ctrlKey || e.metaKey || e.altKey) return;
   if (state.scene !== 'play' || state.paused) return;
   if (e.key === ' ') {
     state.morseInput.pressEnd();
@@ -648,7 +674,7 @@ export function draw(options = {}) {
       orientation: landscape ? 'landscape' : 'portrait',
     });
     drawHud(W, H, layout);
-    drawScoreBubbles(W, H);
+    drawScoreBubbles(W, H, layout);
     if (state.letterTooltip) drawLetterTooltip(W, H, layout);
     if (state.paused && !(state.promotion && state.promotion.stage === 'intrusive')) {
       drawPausedOverlay(layout.radar);
@@ -666,6 +692,7 @@ export function draw(options = {}) {
       usedLetters: state.codeInput.getUsedLetters(),
       explainer: state.explainerIndex,
       isTouch,
+      unitMs: state.settings.unitMs,
     });
   } else if (state.overlay === 'settings') {
     state.settingsOverlay.draw(ctx, { x: 0, y: 0, w: W, h: H });
@@ -775,7 +802,11 @@ function applyOverrides(options) {
   }
   if (options.scoreBubbles) {
     state.scoreBubbles = options.scoreBubbles.map((text, i) => ({
-      text, x: -1, y: 80 + i * 20, t: 0, lifetime: 1.4,
+      text,
+      nx: -0.4 + i * 0.4,
+      ny: -0.3 + i * 0.15,
+      t: 0,
+      lifetime: 1.4,
     }));
   }
 }
@@ -895,62 +926,87 @@ function titleArrowRects(W, H) {
 function drawHud(W, H, layout) {
   const cfg = getLevel(state.level);
   const rank = rankFor(state.level);
+  const sc = textScale();
 
   ctx.fillStyle = '#b6ffc4';
-  ctx.font = '14px monospace';
+  ctx.font = `${fs(14)}px monospace`;
   ctx.textAlign = 'left';
   ctx.textBaseline = 'top';
-  const hudX = layout.radar.x + 12;
-  // Rank label with insignia
-  const insigSize = 26;
-  drawInsignia(ctx, hudX + insigSize / 2, 26, insigSize, state.level);
+  const hudX = layout.radar.x + Math.round(12 * sc);
+  const insigSize = Math.round(26 * sc);
+  const hudTopY = Math.round(8 * sc);
+  drawInsignia(ctx, hudX + insigSize / 2, hudTopY + insigSize / 2, insigSize, state.level);
   ctx.fillStyle = '#b6ffc4';
-  ctx.fillText(`LV ${state.level} — ${rank}`, hudX + insigSize + 10, 8);
-  ctx.font = '11px monospace';
+  ctx.font = `bold ${fs(14)}px monospace`;
+  ctx.fillText(`LV ${state.level} — ${rank}`, hudX + insigSize + Math.round(10 * sc), hudTopY);
+  ctx.font = `${fs(11)}px monospace`;
   ctx.fillStyle = 'rgba(180, 255, 200, 0.6)';
-  ctx.fillText(cfg.name, hudX + insigSize + 10, 26);
+  // Short descriptor only (strip any "Level N — " prefix that might be in the JSON).
+  const shortName = cfg.name.replace(/^Level\s*\d+\s*[—-]\s*/i, '');
+  ctx.fillText(shortName, hudX + insigSize + Math.round(10 * sc), hudTopY + fs(16));
 
-  ctx.textAlign = 'right';
-  ctx.font = '13px monospace';
   const timeLeft = Math.max(0, cfg.duration - state.levelElapsed);
-  ctx.fillStyle = '#b6ffc4';
-  ctx.fillText(`${timeLeft.toFixed(0)}s`, W - 12, 46);
-  ctx.fillStyle = '#eaffe1';
-  ctx.fillText(`DESTROYED ${state.enemiesDestroyed}`, W - 12, 62);
-
-  drawHealthBar(hudX, 50, 160, 12);
-
+  // Right-side block: buttons up top, stats below
   drawButton(pauseButtonRect(W), state.paused ? 'Resume' : 'Pause', state.paused);
   drawButton(helpButtonRect(W), 'Help', state.overlay === 'help');
   drawButton(settingsButtonRect(W), 'Settings', state.overlay === 'settings');
 
-  // Persistent transmit hint
+  ctx.textAlign = 'right';
+  ctx.font = `bold ${fs(13)}px monospace`;
+  const statsY = pauseButtonRect(W).y + pauseButtonRect(W).h + Math.round(8 * sc);
+  ctx.fillStyle = '#b6ffc4';
+  ctx.fillText(`${timeLeft.toFixed(0)}s`, W - Math.round(12 * sc), statsY);
+  ctx.fillStyle = '#ffd070';
+  ctx.font = `bold ${fs(16)}px monospace`;
+  ctx.fillText(`SCORE ${currentScore()}`, W - Math.round(12 * sc), statsY + fs(18));
+  ctx.fillStyle = '#eaffe1';
+  ctx.font = `${fs(12)}px monospace`;
+  ctx.fillText(`DESTROYED ${state.enemiesDestroyed}`, W - Math.round(12 * sc), statsY + fs(38));
+
+  drawHealthBar(hudX, hudTopY + insigSize + Math.round(8 * sc), Math.round(160 * sc), Math.round(12 * sc));
+
+  // Persistent transmit hint at the bottom of the radar.
   ctx.fillStyle = 'rgba(200, 255, 210, 0.85)';
-  ctx.font = 'bold 13px monospace';
+  ctx.font = `bold ${fs(13)}px monospace`;
   ctx.textAlign = 'center';
   ctx.textBaseline = 'bottom';
   ctx.fillText(
     isTouch ? 'TAP for dot · hold longer for dash · P pause' : 'SPACE for dot · hold longer for dash · P pause',
     layout.radar.x + layout.radar.w / 2,
-    layout.radar.y + layout.radar.h - 8
+    layout.radar.y + layout.radar.h - Math.round(8 * sc)
   );
 
   if (state.settings.showUnit) {
     ctx.textAlign = 'left';
     ctx.textBaseline = 'bottom';
     ctx.fillStyle = 'rgba(180, 255, 200, 0.8)';
-    ctx.font = '11px monospace';
+    ctx.font = `${fs(11)}px monospace`;
     ctx.fillText(
       `unit ${Math.round(state.morseInput.getUnit())} ms  cutoff ${state.settings.cutoff.toFixed(2)}`,
-      12, H - 10
+      Math.round(12 * sc), H - Math.round(10 * sc)
     );
   }
 }
 
-// HUD button rectangles — now sized for text labels.
-function helpButtonRect(W) { return { x: W - 240, y: 8, w: 72, h: 30 }; }
-function settingsButtonRect(W) { return { x: W - 164, y: 8, w: 100, h: 30 }; }
-function pauseButtonRect(W) { return { x: W - 60, y: 8, w: 52, h: 30 }; }
+// HUD button rectangles — chained right-to-left so spacing stays tight at
+// any text scale.
+function pauseButtonRect(W) {
+  const s = textScale();
+  const w = Math.round(88 * s), h = Math.round(30 * s);
+  return { x: W - Math.round(8 * s) - w, y: Math.round(8 * s), w, h };
+}
+function settingsButtonRect(W) {
+  const s = textScale();
+  const w = Math.round(100 * s), h = Math.round(30 * s);
+  const pr = pauseButtonRect(W);
+  return { x: pr.x - Math.round(4 * s) - w, y: Math.round(8 * s), w, h };
+}
+function helpButtonRect(W) {
+  const s = textScale();
+  const w = Math.round(72 * s), h = Math.round(30 * s);
+  const sr = settingsButtonRect(W);
+  return { x: sr.x - Math.round(4 * s) - w, y: Math.round(8 * s), w, h };
+}
 
 function drawButton(rect, label, active) {
   ctx.save();
@@ -960,7 +1016,7 @@ function drawButton(rect, label, active) {
   ctx.fillRect(rect.x, rect.y, rect.w, rect.h);
   ctx.strokeRect(rect.x + 0.5, rect.y + 0.5, rect.w - 1, rect.h - 1);
   ctx.fillStyle = '#eaffe1';
-  ctx.font = 'bold 15px monospace';
+  ctx.font = `bold ${fs(15)}px monospace`;
   ctx.textAlign = 'center';
   ctx.textBaseline = 'middle';
   ctx.fillText(label, rect.x + rect.w / 2, rect.y + rect.h / 2 + 1);
@@ -1006,29 +1062,27 @@ function drawLetterTooltip(W, H, layout) {
   const alpha = remaining > 500 ? 1 : Math.max(0, remaining / 500);
 
   const cx = layout.radar.x + layout.radar.w / 2;
-  const cy = layout.radar.y + Math.max(80, layout.radar.h * 0.18);
-  const size = Math.min(W, H) * 0.11;
+  const cy = layout.radar.y + Math.max(56, layout.radar.h * 0.14);
+  // Tooltip size — smaller than before; still scales a bit with screen.
+  const size = Math.min(W, H) * 0.055;
   const text = `${t.letter}  =  ${t.code}`;
   ctx.save();
   ctx.globalAlpha = alpha;
-  // Backdrop halo
   ctx.font = `bold ${Math.round(size)}px monospace`;
   ctx.textAlign = 'center';
   ctx.textBaseline = 'middle';
   const metrics = ctx.measureText(text);
-  const boxW = metrics.width + 40;
-  const boxH = size * 1.4;
-  ctx.fillStyle = 'rgba(6, 20, 10, 0.9)';
+  const boxW = metrics.width + Math.round(size * 0.8);
+  const boxH = size * 1.55;
+  ctx.fillStyle = 'rgba(6, 20, 10, 0.92)';
   ctx.fillRect(cx - boxW / 2, cy - boxH / 2, boxW, boxH);
   ctx.strokeStyle = '#ffd070';
   ctx.lineWidth = 2;
   ctx.strokeRect(cx - boxW / 2 + 1, cy - boxH / 2 + 1, boxW - 2, boxH - 2);
-  // Small header above
   ctx.fillStyle = '#ffd070';
-  ctx.font = 'bold 12px monospace';
+  ctx.font = `bold ${Math.max(10, Math.round(size * 0.32))}px monospace`;
   ctx.textBaseline = 'bottom';
-  ctx.fillText('NEW LETTER', cx, cy - boxH / 2 - 4);
-  // Big letter = code text
+  ctx.fillText('NEW LETTER', cx, cy - boxH / 2 - 3);
   ctx.fillStyle = '#eaffe1';
   ctx.font = `bold ${Math.round(size)}px monospace`;
   ctx.textBaseline = 'middle';
@@ -1036,19 +1090,23 @@ function drawLetterTooltip(W, H, layout) {
   ctx.restore();
 }
 
-function drawScoreBubbles(W, H) {
+function drawScoreBubbles(W, H, layout) {
   if (!state.scoreBubbles || state.scoreBubbles.length === 0) return;
+  const radarCx = layout.radar.x + layout.radar.w / 2;
+  const radarCy = layout.radar.y + layout.radar.h / 2;
+  const radius = Math.min(layout.radar.w, layout.radar.h) * 0.46;
   ctx.save();
+  const fontSize = Math.round(20 * textScale());
   for (const b of state.scoreBubbles) {
     const prog = b.t / b.lifetime;
     const alpha = Math.max(0, 1 - prog);
-    const rise = prog * 40;
-    const ax = b.x < 0 ? W - 12 : b.x;
-    const ay = b.y - rise;
+    const rise = prog * 56;
+    const ax = radarCx + b.nx * radius;
+    const ay = radarCy + b.ny * radius - rise;
     ctx.globalAlpha = alpha;
     ctx.fillStyle = '#ffd070';
-    ctx.font = 'bold 18px monospace';
-    ctx.textAlign = 'right';
+    ctx.font = `bold ${fontSize}px monospace`;
+    ctx.textAlign = 'center';
     ctx.textBaseline = 'middle';
     ctx.fillText(b.text, ax, ay);
   }

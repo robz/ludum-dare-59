@@ -24,7 +24,7 @@ export function drawLeaderboard(ctx, rect, stats) {
   ctx.textBaseline = 'top';
   ctx.fillText('MISSION FAILED', mx + mw / 2, my + 22);
 
-  // Score block (CPM, centered)
+  // Score block
   const scoreY = my + 70;
   ctx.fillStyle = '#eaffe1';
   ctx.font = 'bold 14px monospace';
@@ -32,7 +32,7 @@ export function drawLeaderboard(ctx, rect, stats) {
   ctx.fillStyle = '#ffd070';
   ctx.font = 'bold 42px monospace';
   ctx.textBaseline = 'top';
-  ctx.fillText(`${stats.cpm.toFixed(1)} CPM`, mx + mw / 2, scoreY + 18);
+  ctx.fillText(`${stats.score ?? 0}`, mx + mw / 2, scoreY + 18);
 
   // Ranking
   if (stats.rank && stats.total) {

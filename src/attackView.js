@@ -91,6 +91,11 @@ export class AttackView {
         if (m.completed) {
           result.destroyed += 1;
           (result.destroyedTexts ||= []).push(target.text);
+          (result.destroyedEvents ||= []).push({
+            text: target.text,
+            nx: tx,
+            ny: ty,
+          });
         }
       }
     }
@@ -144,27 +149,54 @@ export class AttackView {
       ctx.stroke();
     }
 
-    // Sweep wedge
+    // Sweep wedge + phosphor afterglow trail
     ctx.save();
     ctx.translate(cx, cy);
+    const trailArc = 1.4; // radians behind the leading edge
     const sg = ctx.createConicGradient
-      ? ctx.createConicGradient(this.sweepAngle, 0, 0)
+      ? ctx.createConicGradient(this.sweepAngle - trailArc, 0, 0)
       : null;
     if (sg) {
-      sg.addColorStop(0, 'rgba(120, 255, 140, 0.55)');
-      sg.addColorStop(0.15, 'rgba(120, 255, 140, 0.0)');
+      // Bright phosphor spike at the leading edge, long exponential fade back.
+      sg.addColorStop(0.0, 'rgba(150, 255, 170, 0.0)');
+      sg.addColorStop(0.45, 'rgba(120, 255, 140, 0.04)');
+      sg.addColorStop(0.75, 'rgba(140, 255, 160, 0.20)');
+      sg.addColorStop(0.95, 'rgba(220, 255, 220, 0.55)');
+      sg.addColorStop(trailArc / (Math.PI * 2), 'rgba(255, 255, 255, 0.85)');
+      sg.addColorStop(Math.min(1, (trailArc + 0.015) / (Math.PI * 2)), 'rgba(255, 255, 255, 0.0)');
       sg.addColorStop(1, 'rgba(120, 255, 140, 0.0)');
       ctx.fillStyle = sg;
     } else {
-      ctx.fillStyle = 'rgba(120, 255, 140, 0.25)';
+      ctx.fillStyle = 'rgba(120, 255, 140, 0.2)';
     }
     ctx.beginPath();
     ctx.moveTo(0, 0);
-    ctx.arc(0, 0, radius, this.sweepAngle - 0.35, this.sweepAngle + 0.02);
+    ctx.arc(0, 0, radius, this.sweepAngle - trailArc, this.sweepAngle + 0.02);
     ctx.closePath();
     ctx.fill();
-    // Sweep line
-    ctx.strokeStyle = 'rgba(180, 255, 200, 0.95)';
+
+    // Soft outer glow ring rotating just outside the trail.
+    const glow = ctx.createRadialGradient(
+      Math.cos(this.sweepAngle) * radius * 0.7,
+      Math.sin(this.sweepAngle) * radius * 0.7,
+      0,
+      Math.cos(this.sweepAngle) * radius * 0.7,
+      Math.sin(this.sweepAngle) * radius * 0.7,
+      radius * 0.35
+    );
+    glow.addColorStop(0, 'rgba(180, 255, 200, 0.25)');
+    glow.addColorStop(1, 'rgba(120, 255, 140, 0)');
+    ctx.fillStyle = glow;
+    ctx.beginPath();
+    ctx.arc(
+      Math.cos(this.sweepAngle) * radius * 0.6,
+      Math.sin(this.sweepAngle) * radius * 0.6,
+      radius * 0.4, 0, Math.PI * 2
+    );
+    ctx.fill();
+
+    // Crisp leading sweep line
+    ctx.strokeStyle = 'rgba(210, 255, 225, 0.95)';
     ctx.lineWidth = 2;
     ctx.beginPath();
     ctx.moveTo(0, 0);

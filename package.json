@@ -15,7 +15,8 @@
   "type": "module",
   "main": "index.html",
   "scripts": {
-    "snapshot": "node snapshot.js"
+    "snapshot": "node snapshot.js",
+    "upload": "rm -f game.zip && zip -r game.zip index.html src && butler push game.zip robbzz/morse-defense:html5"
   },
   "dependencies": {
     "canvas": "^3.2.3"

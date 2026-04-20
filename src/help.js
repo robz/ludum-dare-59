@@ -5,7 +5,7 @@ import { CODE_TO_LETTER, LETTER_TO_CODE } from './morse.js';
 
 export const EXPLAINER_COUNT = 2;
 
-export function drawHelp(ctx, rect, { usedLetters = new Set(), explainer = 0, isTouch = false } = {}) {
+export function drawHelp(ctx, rect, { usedLetters = new Set(), explainer = 0, isTouch = false, unitMs = 100 } = {}) {
   const { x, y, w, h } = rect;
   ctx.fillStyle = 'rgba(0, 10, 5, 0.82)';
   ctx.fillRect(x, y, w, h);
@@ -49,7 +49,7 @@ export function drawHelp(ctx, rect, { usedLetters = new Set(), explainer = 0, is
     w: mw - 2 * padX, h: mh - (headerY - my) - explainerH - 44,
   };
 
-  drawExplainerFrame(ctx, explainerRect, explainer);
+  drawExplainerFrame(ctx, explainerRect, explainer, { unitMs });
   drawTreeSection(ctx, treeRect, usedLetters);
 
   ctx.fillStyle = 'rgba(180, 255, 200, 0.7)';
@@ -58,7 +58,7 @@ export function drawHelp(ctx, rect, { usedLetters = new Set(), explainer = 0, is
   ctx.fillText('←/→ cycle explanation   ·   H or ESC to close', mx + mw / 2, my + mh - 22);
 }
 
-function drawExplainerFrame(ctx, rect, index) {
+function drawExplainerFrame(ctx, rect, index, { unitMs = 100 } = {}) {
   const { x, y, w, h } = rect;
   ctx.save();
   ctx.fillStyle = 'rgba(10, 28, 15, 0.75)';
@@ -84,7 +84,7 @@ function drawExplainerFrame(ctx, rect, index) {
 
   const inner = { x: x + 14, y: y + 36, w: w - 28, h: h - 46 };
   const variant = EXPLAINER_VARIANTS[index % EXPLAINER_COUNT];
-  variant(ctx, inner);
+  variant(ctx, inner, { unitMs });
   ctx.restore();
 }
 
@@ -95,10 +95,20 @@ const EXPLAINER_VARIANTS = [
   drawVariantAnatomy,
 ];
 
-function drawVariantTimeline(ctx, rect) {
+function drawVariantTimeline(ctx, rect, { unitMs = 100 } = {}) {
   // "A TV" rendered to scale: 1-unit dots, 3-unit dashes, 1-unit intra-letter
   // gaps, 3-unit inter-letter gaps, 7-unit word gap.
   const { x, y, w, h } = rect;
+
+  // Unit-length key in the top-right of this card.
+  ctx.save();
+  ctx.fillStyle = '#ffd070';
+  ctx.font = 'bold 12px monospace';
+  ctx.textAlign = 'right';
+  ctx.textBaseline = 'top';
+  ctx.fillText(`1 unit = ${Math.round(unitMs)} ms (adjust in settings)`, x + w, y);
+  ctx.restore();
+
   // Total units in "A TV":
   //   A = dot + 1 + dash         (1 + 1 + 3)                = 5 units
   //   word gap (A → T)                                      = 7 units
