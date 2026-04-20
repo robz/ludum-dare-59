@@ -71,12 +71,6 @@ export class CodeInputSliding {
     ctx.lineWidth = 1;
     ctx.strokeRect(x + 0.5, y + 0.5, w - 1, h - 1);
 
-    ctx.fillStyle = 'rgba(140, 255, 170, 0.55)';
-    ctx.font = '11px monospace';
-    ctx.textAlign = 'left';
-    ctx.textBaseline = 'top';
-    ctx.fillText('TRANSMIT', x + 10, y + 8);
-
     const midY = y + h * 0.42;
     const cx = x + w * 0.5;
     const spacing = Math.min(w * 0.23, 150);

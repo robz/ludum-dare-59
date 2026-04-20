@@ -28,7 +28,11 @@ function parseArgs(argv) {
     else if (a === '--banner') out.banner = argv[++i];
     else if (a === '--paused') out.paused = argv[++i] !== 'false';
     else if (a === '--interface') out.interface = argv[++i];
-    else if (a === '--press') out.press = argv[++i]; // e.g. ".-._..-" where _ = short gap
+    else if (a === '--press') out.press = argv[++i];
+    else if (a === '--letters') out.letters = argv[++i];
+    else if (a === '--explainerindex' || a === '--explainerIndex') out.explainerIndex = parseInt(argv[++i], 10);
+    else if (a === '--promotion') out.promotion = argv[++i];
+    else if (a === '--pressedForMs' || a === '--pressed') out.pressedForMs = parseInt(argv[++i], 10);
     else if (a === '-h' || a === '--help') out.help = true;
   }
   return out;
@@ -102,6 +106,15 @@ if (args.destroyed !== undefined) drawOptions.destroyed = args.destroyed;
 if (args.banner) drawOptions.invalidBanner = args.banner;
 if (args.paused !== undefined) drawOptions.paused = args.paused;
 if (args.interface) drawOptions.interface = args.interface;
+if (args.explainerIndex !== undefined) drawOptions.explainerIndex = args.explainerIndex;
+if (args.letters) drawOptions.letterStamps = args.letters.split('').filter(Boolean);
+if (args.promotion) {
+  drawOptions.promotion = {
+    targetLevel: (args.level || 1) + 1,
+    stage: args.promotion,
+  };
+}
+if (args.pressedForMs !== undefined) drawOptions.pressedForMs = args.pressedForMs;
 if (args.press) {
   // Encoding: `.` or `-` emit a press; `|` = char gap (3u) before next press;
   // ` ` = word gap (7u); default in-letter spacing is 1u.

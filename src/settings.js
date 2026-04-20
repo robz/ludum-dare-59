@@ -2,7 +2,8 @@
 
 export const DEFAULTS = Object.freeze({
   maxHits: 3,
-  unitMs: 200,
+  unitMs: 100,
+  cutoff: 0.8,
   volume: 0.35,
   showUnit: true,
   interface: 'tree', // 'tree' | 'sliding'
@@ -29,7 +30,8 @@ export function saveSettings(s) {
 const ITEMS = [
   { key: 'interface', label: 'Code interface', options: ['tree', 'sliding'], fmt: v => v.toUpperCase() },
   { key: 'maxHits', label: 'Hits required to die', min: 1, max: 10, step: 1, fmt: v => `${v}` },
-  { key: 'unitMs',  label: 'Initial unit duration', min: 80, max: 600, step: 20, fmt: v => `${v} ms` },
+  { key: 'unitMs',  label: 'Initial unit duration', min: 60, max: 400, step: 10, fmt: v => `${v} ms` },
+  { key: 'cutoff',  label: 'Threshold cutoff',      min: 0.5, max: 1.0, step: 0.05, fmt: v => `${v.toFixed(2)}` },
   { key: 'volume',  label: 'Master volume',         min: 0, max: 1,  step: 0.05, fmt: v => `${Math.round(v * 100)}%` },
   { key: 'showUnit',label: 'Show unit (debug HUD)', toggle: true, fmt: v => v ? 'ON' : 'OFF' },
 ];

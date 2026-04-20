@@ -27,7 +27,6 @@ export class AttackView {
     this.enemies.push({
       id: this.nextEnemyId++,
       text: text.toUpperCase(),
-      progress: 0,
       angle,
       r: 1.0,
       speed: this.enemySpeed,
@@ -40,28 +39,24 @@ export class AttackView {
     return this.enemies.filter(e => !e.dying).length;
   }
 
-  // Fire a missile toward the first enemy whose next letter matches.
-  // Returns { hit, completed, letter } — completed=true when the enemy's
-  // final letter is matched (missile will destroy it on arrival).
-  fire(letter) {
-    letter = (letter || '').toUpperCase();
-    const target = this.enemies.find(e =>
-      !e.dying && e.text[e.progress] === letter
-    );
-    if (!target) return { hit: false, completed: false, letter };
+  setPartialWord(text) {
+    this._partialWord = (text || '').toUpperCase();
+  }
 
-    target.progress += 1;
-    const completed = target.progress >= target.text.length;
-    if (completed) target.dying = true;
-
+  // Fire a missile against an enemy whose full text equals `word`.
+  // Returns { hit, text }.
+  fire(word) {
+    word = (word || '').toUpperCase();
+    const target = this.enemies.find(e => !e.dying && e.text === word);
+    if (!target) return { hit: false, text: word };
+    target.dying = true;
     this.missiles.push({
       fromX: 0, fromY: 0,
       targetId: target.id,
-      targetHitIndex: target.progress - 1,
-      completed,
+      completed: true,
       t: 0,
     });
-    return { hit: true, completed, letter };
+    return { hit: true, text: word };
   }
 
   update(dt, now = performance.now()) {
@@ -178,29 +173,28 @@ export class AttackView {
     ctx.restore();
 
     // Enemies
+    const partial = this._partialWord || '';
     for (const e of this.enemies) {
       if (e.dying && e.finished) continue;
       const ex = cx + Math.cos(e.angle) * e.r * radius;
       const ey = cy + Math.sin(e.angle) * e.r * radius;
       const lit = Math.max(0, 1 - (now - e.litAt) / LIT_FADE_MS);
       const baseAlpha = 0.28 + 0.72 * lit;
+      const prefixMatch = partial && e.text.startsWith(partial) ? partial.length : 0;
       ctx.save();
       ctx.globalAlpha = baseAlpha;
-      // blip
-      ctx.fillStyle = '#b6ffc4';
+      ctx.fillStyle = prefixMatch > 0 ? '#ffd070' : '#b6ffc4';
       ctx.beginPath(); ctx.arc(ex, ey, 4 + 2 * lit, 0, Math.PI * 2); ctx.fill();
-      // text: show remaining letters, already-hit letters dimmed
       ctx.font = 'bold 18px monospace';
       ctx.textAlign = 'center';
       ctx.textBaseline = 'bottom';
-      let tx = ex;
       const ty = ey - 10;
       const charW = 11;
       const total = e.text.length;
-      const startX = tx - ((total - 1) * charW) / 2;
+      const startX = ex - ((total - 1) * charW) / 2;
       for (let i = 0; i < total; i++) {
-        const done = i < e.progress;
-        ctx.fillStyle = done ? 'rgba(110,255,150,0.35)' : '#eaffe1';
+        const matched = i < prefixMatch;
+        ctx.fillStyle = matched ? '#ffd070' : '#eaffe1';
         ctx.fillText(e.text[i], startX + i * charW, ty);
       }
       ctx.restore();
