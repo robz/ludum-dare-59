@@ -20,18 +20,15 @@ export function drawHelp(ctx, rect, usedLetters) {
   ctx.strokeRect(mx + 0.5, my + 0.5, mw - 1, mh - 1);
 
   ctx.fillStyle = '#b6ffc4';
-  ctx.font = 'bold 22px monospace';
+  ctx.font = 'bold 26px monospace';
   ctx.textAlign = 'center';
   ctx.textBaseline = 'top';
-  ctx.fillText('MORSE CODE TREE', mx + mw / 2, my + 14);
-  ctx.font = '12px monospace';
-  ctx.fillStyle = 'rgba(180, 255, 200, 0.7)';
-  ctx.fillText('· = dot (left)   — = dash (right)   destroyed letters are lit', mx + mw / 2, my + 44);
+  ctx.fillText('MORSE CODE TREE', mx + mw / 2, my + 18);
 
   const treeX = mx + 30;
-  const treeY = my + 78;
+  const treeY = my + 66;
   const treeW = mw - 60;
-  const treeH = mh - 132;
+  const treeH = mh - 120;
   drawTree(ctx, treeX, treeY, treeW, treeH, usedLetters);
 
   ctx.fillStyle = 'rgba(180, 255, 200, 0.7)';
@@ -63,11 +60,11 @@ function drawTree(ctx, x, y, w, h, used) {
         : x + ((parentIndex + 0.5) / (1 << parentDepth)) * w;
       const parentY = rowY[parentDepth];
       const isUsed = used.has(letter);
-      ctx.strokeStyle = isUsed ? 'rgba(180, 255, 200, 0.8)' : 'rgba(80, 220, 110, 0.25)';
-      ctx.lineWidth = isUsed ? 1.5 : 1;
+      ctx.strokeStyle = isUsed ? 'rgba(180, 255, 200, 0.8)' : 'rgba(80, 220, 110, 0.3)';
+      ctx.lineWidth = isUsed ? 1.8 : 1.2;
       ctx.beginPath();
-      ctx.moveTo(parentX, parentY + 14);
-      ctx.lineTo(nx, ny - 14);
+      ctx.moveTo(parentX, parentY + 20);
+      ctx.lineTo(nx, ny - 20);
       ctx.stroke();
       drawNode(ctx, nx, ny, letter, code, isUsed, 1);
     }
@@ -76,25 +73,25 @@ function drawTree(ctx, x, y, w, h, used) {
 
 function drawNode(ctx, cx, cy, label, code, highlighted, scale) {
   const isRoot = label === 'START';
-  const r = (isRoot ? 22 : 14) * scale;
+  const r = (isRoot ? 26 : 20) * scale;
   ctx.save();
-  ctx.fillStyle = highlighted ? 'rgba(120, 255, 160, 0.4)' : 'rgba(10, 28, 15, 0.95)';
+  ctx.fillStyle = highlighted ? 'rgba(120, 255, 160, 0.45)' : 'rgba(10, 28, 15, 0.95)';
   ctx.strokeStyle = highlighted ? '#d0ffd8' : (isRoot ? '#b6ffc4' : '#4eff6d');
-  ctx.lineWidth = 1.5;
+  ctx.lineWidth = 1.8;
   ctx.beginPath();
   ctx.arc(cx, cy, r, 0, Math.PI * 2);
   ctx.fill();
   ctx.stroke();
   ctx.fillStyle = '#eaffe1';
-  ctx.font = `bold ${isRoot ? 10 : 13}px monospace`;
+  ctx.font = `bold ${isRoot ? 12 : 18}px monospace`;
   ctx.textAlign = 'center';
   ctx.textBaseline = 'middle';
   ctx.fillText(label, cx, cy);
   if (code) {
-    ctx.font = '9px monospace';
+    ctx.font = 'bold 14px monospace';
     ctx.fillStyle = highlighted ? '#d0ffd8' : '#8fffa1';
     ctx.textBaseline = 'top';
-    ctx.fillText(code, cx, cy + r + 3);
+    ctx.fillText(code, cx, cy + r + 4);
   }
   ctx.restore();
 }

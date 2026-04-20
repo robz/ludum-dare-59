@@ -1,19 +1,21 @@
-// Morse Code Typing Game — main entry point.
+// Morse Defense — main entry point.
 //
 // Scenes:   'title' | 'play' | 'dead'
-// Overlays: help (H), settings (S)
+// Overlays: help (title only) | settings (title or play)
 //
 // Exports draw(options) so snapshot.js can render any scene headlessly.
 
-import { CodeInput } from './codeInput.js';
+import { CodeInputTree } from './codeInputTree.js';
+import { CodeInputSliding } from './codeInputSliding.js';
 import { AttackView } from './attackView.js';
 import { MorseInput } from './morseInput.js';
-import { SettingsOverlay, loadSettings, saveSettings, DEFAULTS } from './settings.js';
+import { SettingsOverlay, loadSettings, saveSettings } from './settings.js';
 import { loadProgress, saveProgress } from './progress.js';
 import { drawHelp } from './help.js';
 import { drawLeaderboard } from './leaderboard.js';
+import { drawTape } from './tape.js';
 import { LEVELS, getLevel, levelCount } from './levels.js';
-import { ALL_LETTERS, parentLetter, codeToLetter } from './morse.js';
+import { ALL_LETTERS, LETTER_TO_CODE, parentLetter, codeToLetter } from './morse.js';
 import {
   resumeAudio, setVolume,
   startMorseTone, stopMorseTone,
@@ -30,23 +32,23 @@ const state = makeInitialState();
 function makeInitialState() {
   const settings = loadSettings();
   const progress = loadProgress();
-  const codeInput = new CodeInput();
+  const codeInput = makeCodeInput(settings.interface);
   const attackView = new AttackView({ enemySpeed: LEVELS[0].enemySpeed });
   const morseInput = new MorseInput({
     unit: settings.unitMs,
     onSymbol,
     onCharacterComplete,
-    onPressStart: () => { if (state.scene === 'play') startMorseTone(); },
+    onPressStart: () => { if (state.scene === 'play' && !state.paused) startMorseTone(); },
     onPressEnd: () => stopMorseTone(),
   });
   const settingsOverlay = new SettingsOverlay(settings);
   setVolume(settings.volume);
 
-  const s = {
+  return {
     scene: 'title',
-    overlay: null, // 'help' | 'settings' | null
+    overlay: null,
+    paused: false,
     level: 1,
-    levelStartTime: 0,
     levelElapsed: 0,
     gameElapsed: 0,
     spawnCountdown: 0,
@@ -54,21 +56,37 @@ function makeInitialState() {
     charsSent: 0,
     enemiesDestroyed: 0,
     levelReached: 1,
-    killedLetters: new Set(),
-    invalidBanner: null, // { msg, until }
-    titleLevelPick: Math.max(1, Math.min(progress.maxLevel, levelCount())),
+    destroyCount: new Map(), // letter -> count of single-letter kills
+    killedLetters: new Set(), // any letter destroyed at least once (for title / tree lighting)
+    invalidBanner: null,
+    titleLevelPick: 1, // on refresh, always start on first level
     codeInput, attackView, morseInput, settingsOverlay,
     settings, progress,
     lastFrameTime: null,
+    lastRun: null,
   };
-  return s;
+}
+
+function makeCodeInput(kind) {
+  return kind === 'sliding' ? new CodeInputSliding() : new CodeInputTree();
+}
+
+function swapCodeInterface(kind) {
+  const oldUsed = state.codeInput.getUsedLetters();
+  state.codeInput = makeCodeInput(kind);
+  for (const l of oldUsed) state.codeInput.markUsed(l);
 }
 
 function onSymbol(symbol) {
+  if (state.scene !== 'play' || state.paused) return;
   state.codeInput.advance(symbol);
 }
 
 function onCharacterComplete(code) {
+  if (state.scene !== 'play' || state.paused) {
+    state.codeInput.reset();
+    return;
+  }
   const letter = codeToLetter(code);
   if (!letter) {
     state.codeInput.resetFlash('?', false);
@@ -82,7 +100,7 @@ function onCharacterComplete(code) {
   if (result.hit) {
     playFire();
     state.codeInput.markUsed(letter);
-    if (result.completed) state.killedLetters.add(letter);
+    state.killedLetters.add(letter);
   } else {
     playError();
   }
@@ -92,6 +110,7 @@ function onCharacterComplete(code) {
 
 function startGame(fromLevel = 1) {
   state.scene = 'play';
+  state.paused = false;
   state.level = fromLevel;
   state.levelReached = Math.max(state.levelReached, fromLevel);
   state.levelElapsed = 0;
@@ -100,8 +119,9 @@ function startGame(fromLevel = 1) {
   state.health = state.settings.maxHits;
   state.charsSent = 0;
   state.enemiesDestroyed = 0;
+  state.destroyCount = new Map();
   state.killedLetters = new Set();
-  state.codeInput = new CodeInput();
+  state.codeInput = makeCodeInput(state.settings.interface);
   state.attackView = new AttackView({ enemySpeed: getLevel(fromLevel).enemySpeed });
   state.morseInput.setUnit(state.settings.unitMs);
   state.morseInput.reset();
@@ -110,7 +130,6 @@ function startGame(fromLevel = 1) {
 
 function advanceLevel() {
   if (state.level >= levelCount()) {
-    // Loop the hardest level
     state.levelElapsed = 0;
     return;
   }
@@ -119,7 +138,6 @@ function advanceLevel() {
   state.levelElapsed = 0;
   state.spawnCountdown = 1.0;
   state.attackView.setEnemySpeed(getLevel(state.level).enemySpeed);
-  // Save progress once per level reached
   state.progress.maxLevel = Math.max(state.progress.maxLevel, state.level);
   saveProgress(state.progress);
 }
@@ -143,24 +161,42 @@ function die() {
   };
   state.scene = 'dead';
   state.overlay = null;
+  state.paused = false;
   state.morseInput.reset();
   stopMorseTone();
 }
 
+function togglePause() {
+  if (state.scene !== 'play') return;
+  state.paused = !state.paused;
+  if (state.paused) {
+    state.morseInput.reset();
+    stopMorseTone();
+  }
+}
+
 // ---------- spawning ----------
 
-function pickAvailableLetter() {
-  // In level 1, enforce tree-order introduction. Higher levels allow any letter
-  // since words can already contain arbitrary letters.
-  if (state.level === 1) {
-    const pool = ALL_LETTERS.filter(l => {
-      const p = parentLetter(l);
-      return p === null || state.killedLetters.has(p);
-    });
-    if (pool.length === 0) return 'E';
-    return pool[Math.floor(Math.random() * pool.length)];
+function letterAllowed(l) {
+  const code = LETTER_TO_CODE[l];
+  const depth = code.length;
+  const p = parentLetter(l);
+  const counts = state.destroyCount;
+  if (p === null) return true; // depth-1 letters always allowed
+  if ((counts.get(p) || 0) < 2) return false;
+  // All peers at depth (d-1) must have at least 1 destroy.
+  const peerDepth = depth - 1;
+  for (const peer of ALL_LETTERS) {
+    if (LETTER_TO_CODE[peer].length !== peerDepth) continue;
+    if ((counts.get(peer) || 0) < 1) return false;
   }
-  return ALL_LETTERS[Math.floor(Math.random() * ALL_LETTERS.length)];
+  return true;
+}
+
+function pickAvailableLetter() {
+  const pool = ALL_LETTERS.filter(letterAllowed);
+  if (pool.length === 0) return 'E';
+  return pool[Math.floor(Math.random() * pool.length)];
 }
 
 function pickSpawnText() {
@@ -180,7 +216,6 @@ function updatePlay(dt) {
   state.gameElapsed += dt;
   const cfg = getLevel(state.level);
 
-  // Spawn enemies
   state.spawnCountdown -= dt;
   const active = state.attackView.activeCount();
   if (state.spawnCountdown <= 0 && active < cfg.maxActive && state.levelElapsed < cfg.duration) {
@@ -189,7 +224,6 @@ function updatePlay(dt) {
     state.spawnCountdown = mn + Math.random() * (mx - mn);
   }
 
-  // Update attack view
   const r = state.attackView.update(dt);
   if (r.damageTaken > 0) {
     state.health -= r.damageTaken;
@@ -199,16 +233,21 @@ function updatePlay(dt) {
   if (r.destroyed > 0) {
     state.enemiesDestroyed += r.destroyed;
     playExplosion();
+    if (r.destroyedTexts) {
+      for (const txt of r.destroyedTexts) {
+        if (txt.length === 1) {
+          state.destroyCount.set(txt, (state.destroyCount.get(txt) || 0) + 1);
+        }
+      }
+    }
   }
 
   state.codeInput.update(dt);
 
-  // Banner expiry
   if (state.invalidBanner && performance.now() > state.invalidBanner.until) {
     state.invalidBanner = null;
   }
 
-  // Level advance: when timer runs out AND no active enemies
   if (state.levelElapsed >= cfg.duration && state.attackView.activeCount() === 0) {
     advanceLevel();
   }
@@ -225,15 +264,16 @@ function setOverlay(next) {
 
 // ---------- input ----------
 
-const HOTKEYS = new Set([' ', 'h', 'H', 's', 'S', 'Escape', 'Enter', 'ArrowUp', 'ArrowDown', 'ArrowLeft', 'ArrowRight']);
+const HOTKEYS = new Set([' ', 'h', 'H', 's', 'S', 'p', 'P', 'Escape', 'Enter',
+                          'ArrowUp', 'ArrowDown', 'ArrowLeft', 'ArrowRight']);
 for (let i = 1; i <= 9; i++) HOTKEYS.add(String(i));
 
 function handleKeyDown(e) {
   resumeAudio();
 
-  // Global toggles for overlays (from any scene)
+  // Help — only accessible from title screen
   if (e.key === 'h' || e.key === 'H') {
-    if (state.scene === 'play' || state.scene === 'title') {
+    if (state.scene === 'title') {
       setOverlay(state.overlay === 'help' ? null : 'help');
     }
     e.preventDefault();
@@ -251,14 +291,21 @@ function handleKeyDown(e) {
     e.preventDefault();
     return;
   }
+  if (e.key === 'p' || e.key === 'P') {
+    if (state.scene === 'play' && !state.overlay) togglePause();
+    e.preventDefault();
+    return;
+  }
 
   if (state.overlay === 'settings') {
     const res = state.settingsOverlay.handleKey(e.key);
     if (res.changed === 'volume') setVolume(state.settings.volume);
     if (res.changed === 'unitMs') state.morseInput.setUnit(state.settings.unitMs);
+    if (res.changed === 'interface') swapCodeInterface(state.settings.interface);
     if (res.changed === 'reset') {
       setVolume(state.settings.volume);
       state.morseInput.setUnit(state.settings.unitMs);
+      swapCodeInterface(state.settings.interface);
     }
     if (res.changed === 'maxHits') {
       if (state.scene !== 'play') state.health = state.settings.maxHits;
@@ -297,26 +344,29 @@ function handleKeyDown(e) {
   if (state.scene === 'dead') {
     if (e.key === ' ' || e.key === 'Enter') {
       state.scene = 'title';
+      state.titleLevelPick = 1;
     }
     e.preventDefault();
     return;
   }
 
   // Playing
+  if (state.paused) {
+    if (e.key === ' ') { togglePause(); e.preventDefault(); return; }
+    return;
+  }
   if (e.key === ' ') {
-    if (!e.repeat) {
-      state.morseInput.pressStart();
-    }
+    if (!e.repeat) state.morseInput.pressStart();
     e.preventDefault();
     return;
   }
   if (/^[1-9]$/.test(e.key)) {
-    // Debug: jump to level
     const n = parseInt(e.key, 10);
     if (n >= 1 && n <= levelCount()) {
       state.level = n;
       state.levelReached = Math.max(state.levelReached, n);
       state.levelElapsed = 0;
+      state.destroyCount = new Map();
       state.killedLetters = new Set();
       state.attackView = new AttackView({ enemySpeed: getLevel(n).enemySpeed });
       state.spawnCountdown = 0.3;
@@ -325,7 +375,6 @@ function handleKeyDown(e) {
     return;
   }
   if (!HOTKEYS.has(e.key)) {
-    // Invalid key — show banner
     state.invalidBanner = {
       msg: isTouch ? 'Send transmissions by tapping' : 'Send transmissions with spacebar',
       until: performance.now() + 1600,
@@ -335,7 +384,7 @@ function handleKeyDown(e) {
 }
 
 function handleKeyUp(e) {
-  if (state.scene !== 'play') return;
+  if (state.scene !== 'play' || state.paused) return;
   if (e.key === ' ') {
     state.morseInput.pressEnd();
     e.preventDefault();
@@ -347,37 +396,39 @@ function handlePointerDown(e) {
   const rect = canvas.getBoundingClientRect();
   const px = (e.clientX - rect.left) * (canvas.width / rect.width);
   const py = (e.clientY - rect.top) * (canvas.height / rect.height);
-  const hRect = helpButtonRect(canvas.width);
+
+  // Buttons
   const sRect = settingsButtonRect(canvas.width);
-  if (state.scene === 'play' || state.scene === 'title') {
-    if (pointInRect(px, py, hRect)) {
-      setOverlay(state.overlay === 'help' ? null : 'help');
-      return;
-    }
-    if (pointInRect(px, py, sRect)) {
-      setOverlay(state.overlay === 'settings' ? null : 'settings');
-      return;
-    }
-  }
-  if (state.scene === 'title') {
-    startGame(state.titleLevelPick);
+  const pRect = pauseButtonRect(canvas.width);
+  const hRect = helpButtonRect(canvas.width);
+  if ((state.scene === 'play' || state.scene === 'title')
+      && pointInRect(px, py, sRect)) {
+    setOverlay(state.overlay === 'settings' ? null : 'settings');
     return;
   }
-  if (state.scene === 'dead') {
-    state.scene = 'title';
+  if (state.scene === 'play' && pointInRect(px, py, pRect) && !state.overlay) {
+    togglePause();
     return;
   }
+  if (state.scene === 'title' && pointInRect(px, py, hRect)) {
+    setOverlay(state.overlay === 'help' ? null : 'help');
+    return;
+  }
+
   if (state.overlay) {
     setOverlay(null);
     return;
   }
+  if (state.scene === 'title') { startGame(state.titleLevelPick); return; }
+  if (state.scene === 'dead') { state.scene = 'title'; state.titleLevelPick = 1; return; }
   if (state.scene === 'play') {
+    if (state.paused) { togglePause(); return; }
     state.morseInput.pressStart();
   }
 }
 
 function handlePointerUp() {
-  if (state.scene !== 'play') return;
+  if (state.scene !== 'play' || state.paused) return;
   state.morseInput.pressEnd();
 }
 
@@ -394,15 +445,16 @@ export function draw(options = {}) {
   if (state.scene === 'title') {
     drawTitle(W, H);
   } else {
-    const splitY = Math.round(H * 0.66);
-    const radarRect = { x: 0, y: 0, w: W, h: splitY };
-    const codeRect  = { x: 0, y: splitY, w: W, h: H - splitY };
-    state.attackView.draw(ctx, radarRect, { now: performance.now() });
-    state.codeInput.draw(ctx, codeRect, {
+    const landscape = W >= H;
+    const layout = computeLayout(W, H, landscape);
+    state.attackView.draw(ctx, layout.radar, { now: performance.now() });
+    drawTape(ctx, layout.tape, state.morseInput, performance.now());
+    state.codeInput.draw(ctx, layout.code, {
       isPressed: state.morseInput.isPressed(),
-      currentCode: state.codeInput.getCurrentCode(),
+      orientation: landscape ? 'landscape' : 'portrait',
     });
-    drawHud(W, H);
+    drawHud(W, H, layout);
+    if (state.paused) drawPausedOverlay(layout.radar);
   }
 
   if (state.scene === 'dead' && state.lastRun) {
@@ -415,14 +467,36 @@ export function draw(options = {}) {
     state.settingsOverlay.draw(ctx, { x: 0, y: 0, w: W, h: H });
   }
 
-  if (state.invalidBanner) {
-    drawBanner(W, H, state.invalidBanner.msg);
+  if (state.invalidBanner) drawBanner(W, H, state.invalidBanner.msg);
+}
+
+function computeLayout(W, H, landscape) {
+  const tapeH = Math.max(54, Math.min(80, Math.round(H * 0.09)));
+  if (landscape) {
+    const codeW = Math.min(480, Math.max(280, Math.round(W * 0.32)));
+    return {
+      code: { x: 0, y: 0, w: codeW, h: H },
+      radar: { x: codeW, y: 0, w: W - codeW, h: H - tapeH },
+      tape: { x: codeW, y: H - tapeH, w: W - codeW, h: tapeH },
+    };
   }
+  const codeH = Math.min(Math.round(H * 0.4), Math.max(220, Math.round(H * 0.34)));
+  const radarH = H - codeH - tapeH;
+  return {
+    code: { x: 0, y: H - codeH, w: W, h: codeH },
+    radar: { x: 0, y: 0, w: W, h: radarH },
+    tape: { x: 0, y: radarH, w: W, h: tapeH },
+  };
 }
 
 function applyOverrides(options) {
   if (options.scene) state.scene = options.scene;
   if (options.overlay !== undefined) state.overlay = options.overlay;
+  if (options.paused !== undefined) state.paused = options.paused;
+  if (options.interface) {
+    state.settings.interface = options.interface;
+    swapCodeInterface(options.interface);
+  }
   if (options.level) {
     state.level = options.level;
     state.levelReached = Math.max(state.levelReached, options.level);
@@ -439,49 +513,79 @@ function applyOverrides(options) {
     state.killedLetters = new Set(options.killedLetters);
     for (const l of options.killedLetters) state.codeInput.markUsed(l);
   }
+  if (options.destroyCounts) {
+    state.destroyCount = new Map(Object.entries(options.destroyCounts));
+  }
   if (options.currentCode) {
     for (const c of options.currentCode) state.codeInput.advance(c);
-    state.codeInput.animElapsed = 999; // finish anim
+    if (state.codeInput.animElapsed !== undefined) state.codeInput.animElapsed = 999;
   }
   if (options.invalidBanner) {
     state.invalidBanner = { msg: options.invalidBanner, until: performance.now() + 5000 };
   }
   if (options.lastRun) state.lastRun = options.lastRun;
+  if (options.press) {
+    const now = performance.now();
+    const unit = state.morseInput.getUnit();
+    const history = [];
+    let t = 0;
+    for (const p of options.press) {
+      t += (p.gapUnits || 0) * unit;
+      const duration = p.sym === '-' ? unit * 3 : unit;
+      history.push({ start: t, end: t + duration, symbol: p.sym });
+      t += duration;
+    }
+    if (history.length > 0) {
+      const shift = now - 80 - history[history.length - 1].end;
+      for (const h of history) { h.start += shift; h.end += shift; }
+    }
+    state.morseInput._history = history;
+  }
 }
 
 function drawTitle(W, H) {
-  // Radar-ish background
-  const cx = W / 2, cy = H * 0.42;
-  const rad = Math.min(W, H) * 0.32;
+  const cx = W / 2;
+  const landscape = W >= H;
+  const titleY = H * (landscape ? 0.13 : 0.09);
+
+  // Subtle radar backdrop behind title
   ctx.save();
-  const g = ctx.createRadialGradient(cx, cy, 0, cx, cy, rad);
-  g.addColorStop(0, 'rgba(40, 120, 60, 0.4)');
-  g.addColorStop(1, 'rgba(0, 0, 0, 0)');
-  ctx.fillStyle = g;
-  ctx.beginPath(); ctx.arc(cx, cy, rad, 0, Math.PI * 2); ctx.fill();
-  ctx.strokeStyle = 'rgba(80, 220, 110, 0.35)';
-  ctx.lineWidth = 1;
-  for (let i = 1; i <= 4; i++) {
-    ctx.beginPath(); ctx.arc(cx, cy, rad * (i / 4), 0, Math.PI * 2); ctx.stroke();
-  }
+  const rad = Math.min(W, H) * 0.24;
+  const gr = ctx.createRadialGradient(cx, titleY + rad * 0.1, 0, cx, titleY + rad * 0.1, rad);
+  gr.addColorStop(0, 'rgba(40, 120, 60, 0.35)');
+  gr.addColorStop(1, 'rgba(0,0,0,0)');
+  ctx.fillStyle = gr;
+  ctx.beginPath();
+  ctx.arc(cx, titleY + rad * 0.1, rad, 0, Math.PI * 2);
+  ctx.fill();
   ctx.restore();
 
   ctx.fillStyle = '#b6ffc4';
-  ctx.font = `bold ${Math.round(Math.min(W, H) * 0.08)}px monospace`;
+  ctx.font = `bold ${Math.round(Math.min(W, H) * (landscape ? 0.08 : 0.07))}px monospace`;
   ctx.textAlign = 'center';
   ctx.textBaseline = 'middle';
-  ctx.fillText('MORSE TOWER', cx, cy);
+  ctx.fillText('MORSE DEFENSE', cx, titleY);
 
-  ctx.fillStyle = '#8fffa1';
-  ctx.font = `${Math.round(Math.min(W, H) * 0.022)}px monospace`;
-  ctx.fillText('shoot down incoming transmissions', cx, cy + rad * 0.28);
+  ctx.fillStyle = '#eaffe1';
+  ctx.font = `${Math.round(Math.min(W, H) * 0.028)}px monospace`;
+  ctx.fillText(
+    isTouch ? 'Tap to shoot an enemy' : 'Press SPACE or click to shoot an enemy',
+    cx, titleY + Math.round(Math.min(W, H) * 0.065)
+  );
+
+  // Explainer box
+  const explainerY = titleY + Math.round(Math.min(W, H) * 0.13);
+  const explainerW = Math.min(W * 0.82, 780);
+  drawMorseExplainer(cx - explainerW / 2, explainerY, explainerW, Math.min(H * 0.42, 280));
 
   // Level select
-  const selY = H * 0.78;
   const maxPick = Math.min(state.progress.maxLevel || 1, levelCount());
   const cfg = getLevel(state.titleLevelPick);
+  const selY = H * (landscape ? 0.82 : 0.84);
   ctx.fillStyle = '#eaffe1';
-  ctx.font = `${Math.round(Math.min(W, H) * 0.03)}px monospace`;
+  ctx.font = `${Math.round(Math.min(W, H) * 0.028)}px monospace`;
+  ctx.textAlign = 'center';
+  ctx.textBaseline = 'middle';
   ctx.fillText(`◂ LEVEL ${state.titleLevelPick} / ${levelCount()} ▸`, cx, selY);
   ctx.font = `${Math.round(Math.min(W, H) * 0.02)}px monospace`;
   ctx.fillStyle = '#b6ffc4';
@@ -491,10 +595,7 @@ function drawTitle(W, H) {
     ctx.fillText('(not yet unlocked — debug)', cx, selY + 46);
   }
 
-  ctx.fillStyle = 'rgba(200, 255, 210, 0.85)';
-  ctx.font = `${Math.round(Math.min(W, H) * 0.024)}px monospace`;
-  ctx.fillText(isTouch ? 'tap to begin' : 'press SPACE to begin', cx, H * 0.92);
-  ctx.fillStyle = 'rgba(160, 220, 180, 0.6)';
+  ctx.fillStyle = 'rgba(160, 220, 180, 0.7)';
   ctx.font = `${Math.round(Math.min(W, H) * 0.018)}px monospace`;
   ctx.fillText('H help · S settings · ←/→ level', cx, H * 0.96);
 
@@ -502,30 +603,110 @@ function drawTitle(W, H) {
   drawButton(settingsButtonRect(W), '*', state.overlay === 'settings');
 }
 
-function drawHud(W, H) {
+function drawMorseExplainer(x, y, w, h) {
+  ctx.save();
+  ctx.fillStyle = 'rgba(10, 28, 15, 0.65)';
+  ctx.fillRect(x, y, w, h);
+  ctx.strokeStyle = 'rgba(80, 220, 110, 0.35)';
+  ctx.lineWidth = 1;
+  ctx.strokeRect(x + 0.5, y + 0.5, w - 1, h - 1);
+
+  ctx.fillStyle = '#b6ffc4';
+  ctx.font = 'bold 16px monospace';
+  ctx.textAlign = 'left';
+  ctx.textBaseline = 'top';
+  ctx.fillText('HOW MORSE CODE WORKS', x + 14, y + 12);
+
+  ctx.fillStyle = 'rgba(220, 255, 230, 0.85)';
+  ctx.font = '13px monospace';
+  ctx.fillText('One unit of time = a dot. A dash = three units. Symbols inside a letter', x + 14, y + 36);
+  ctx.fillText('sit one unit apart; letters are three units apart; words are seven.', x + 14, y + 54);
+
+  // Visual timeline: morse for "A B" = .- / -... spaced correctly
+  // .(1) _(1) -(3) _(3) -(3) _(1) .(1) _(1) .(1) _(1) .(1)  [ _(7) next word ]
+  // Use unit = 14px, bar height = 16px
+  const timelineY = y + 86;
+  const unit = Math.max(10, Math.min(16, Math.floor((w - 40) / 42)));
+  const barH = 18;
+  let tx = x + 20;
+  const sequence = [
+    { sym: '.' }, { gap: 1 }, { sym: '-' }, { gap: 3, boundary: 'char' },
+    { sym: '-' }, { gap: 1 }, { sym: '.' }, { gap: 1 }, { sym: '.' }, { gap: 1 }, { sym: '.' },
+    { gap: 7, boundary: 'word' },
+    { sym: '-' },
+  ];
+  // Labels A / B / T for reference
+  ctx.fillStyle = 'rgba(200, 255, 210, 0.6)';
+  ctx.font = 'bold 12px monospace';
+  ctx.fillText('A', tx + unit * 1.3, timelineY - 18);
+  ctx.fillText('B', tx + unit * 9,   timelineY - 18);
+  ctx.fillText('T', tx + unit * 24,  timelineY - 18);
+
+  for (const s of sequence) {
+    if (s.sym) {
+      const widthUnits = s.sym === '-' ? 3 : 1;
+      ctx.fillStyle = '#6afc90';
+      ctx.fillRect(tx, timelineY, widthUnits * unit, barH);
+      tx += widthUnits * unit;
+    } else if (s.gap) {
+      if (s.boundary === 'char') {
+        ctx.fillStyle = 'rgba(120, 190, 255, 0.3)';
+        ctx.fillRect(tx, timelineY, s.gap * unit, barH);
+        ctx.fillStyle = '#a7cfff';
+        ctx.font = 'bold 10px monospace';
+        ctx.textAlign = 'center';
+        ctx.fillText('letter gap', tx + (s.gap * unit) / 2, timelineY + barH + 3);
+      } else if (s.boundary === 'word') {
+        ctx.fillStyle = 'rgba(255, 200, 90, 0.25)';
+        ctx.fillRect(tx, timelineY, s.gap * unit, barH);
+        ctx.fillStyle = '#ffd070';
+        ctx.font = 'bold 10px monospace';
+        ctx.textAlign = 'center';
+        ctx.fillText('word gap', tx + (s.gap * unit) / 2, timelineY + barH + 3);
+      }
+      tx += s.gap * unit;
+    }
+  }
+  // Legend
+  ctx.fillStyle = 'rgba(200, 255, 210, 0.85)';
+  ctx.font = '12px monospace';
+  ctx.textAlign = 'left';
+  ctx.fillText('· dot = 1 unit     — dash = 3 units', x + 14, y + h - 32);
+  ctx.fillStyle = 'rgba(200, 255, 210, 0.65)';
+  ctx.fillText('Press H for the full letter tree.', x + 14, y + h - 14);
+  ctx.restore();
+}
+
+function drawHud(W, H, layout) {
   const cfg = getLevel(state.level);
-  // Top-left: level
   ctx.fillStyle = '#b6ffc4';
   ctx.font = '13px monospace';
   ctx.textAlign = 'left';
   ctx.textBaseline = 'top';
-  ctx.fillText(`LV ${state.level}  ${cfg.name}`, 12, 10);
+  ctx.fillText(`LV ${state.level}  ${cfg.name}`, layout.radar.x + 12, 10);
 
-  // Top-right: time left, destroyed — offset to leave room for buttons
   ctx.textAlign = 'right';
   const timeLeft = Math.max(0, cfg.duration - state.levelElapsed);
-  ctx.fillText(`${timeLeft.toFixed(0)}s`, W - 92, 10);
+  ctx.fillText(`${timeLeft.toFixed(0)}s`, W - 120, 10);
   ctx.fillStyle = '#eaffe1';
-  ctx.fillText(`DESTROYED ${state.enemiesDestroyed}`, W - 92, 28);
+  ctx.fillText(`DESTROYED ${state.enemiesDestroyed}`, W - 120, 28);
 
-  // Top-left bottom: health bar
-  drawHealthBar(12, 30, 140, 12);
+  drawHealthBar(layout.radar.x + 12, 30, 140, 12);
 
-  // Top-right buttons
-  drawButton(helpButtonRect(W), '?', state.overlay === 'help');
+  drawButton(pauseButtonRect(W), state.paused ? '▶' : '||', state.paused);
   drawButton(settingsButtonRect(W), '*', state.overlay === 'settings');
 
-  // Bottom-left: unit (debug) if enabled
+  // Persistent transmit hint anchored to radar area
+  ctx.fillStyle = 'rgba(200, 255, 210, 0.85)';
+  ctx.font = 'bold 13px monospace';
+  ctx.textAlign = 'center';
+  ctx.textBaseline = 'bottom';
+  ctx.fillText(
+    isTouch ? 'TAP to transmit · tap & hold for dash' : 'SPACE to transmit · hold for dash · P pause',
+    layout.radar.x + layout.radar.w / 2,
+    layout.radar.y + layout.radar.h - 8
+  );
+
   if (state.settings.showUnit) {
     ctx.textAlign = 'left';
     ctx.textBaseline = 'bottom';
@@ -537,16 +718,17 @@ function drawHud(W, H) {
 
 function helpButtonRect(W) { return { x: W - 78, y: 8, w: 32, h: 32 }; }
 function settingsButtonRect(W) { return { x: W - 42, y: 8, w: 32, h: 32 }; }
+function pauseButtonRect(W) { return { x: W - 78, y: 8, w: 32, h: 32 }; }
 
 function drawButton(rect, label, active) {
   ctx.save();
-  ctx.fillStyle = active ? 'rgba(120, 255, 160, 0.4)' : 'rgba(10, 28, 15, 0.8)';
+  ctx.fillStyle = active ? 'rgba(120, 255, 160, 0.4)' : 'rgba(10, 28, 15, 0.85)';
   ctx.strokeStyle = active ? '#d0ffd8' : '#4eff6d';
   ctx.lineWidth = 1;
   ctx.fillRect(rect.x, rect.y, rect.w, rect.h);
   ctx.strokeRect(rect.x + 0.5, rect.y + 0.5, rect.w - 1, rect.h - 1);
   ctx.fillStyle = '#eaffe1';
-  ctx.font = 'bold 16px monospace';
+  ctx.font = 'bold 14px monospace';
   ctx.textAlign = 'center';
   ctx.textBaseline = 'middle';
   ctx.fillText(label, rect.x + rect.w / 2, rect.y + rect.h / 2 + 1);
@@ -585,13 +767,34 @@ function drawBanner(W, H, msg) {
   ctx.fillText(msg, W / 2, by + bh / 2);
 }
 
+function drawPausedOverlay(rect) {
+  ctx.save();
+  ctx.fillStyle = 'rgba(0, 10, 5, 0.65)';
+  ctx.fillRect(rect.x, rect.y, rect.w, rect.h);
+  ctx.strokeStyle = 'rgba(120, 255, 160, 0.6)';
+  ctx.lineWidth = 2;
+  ctx.strokeRect(rect.x + 1, rect.y + 1, rect.w - 2, rect.h - 2);
+  ctx.fillStyle = '#b6ffc4';
+  ctx.font = 'bold 48px monospace';
+  ctx.textAlign = 'center';
+  ctx.textBaseline = 'middle';
+  ctx.fillText('PAUSED', rect.x + rect.w / 2, rect.y + rect.h / 2 - 10);
+  ctx.font = '16px monospace';
+  ctx.fillStyle = 'rgba(180, 255, 200, 0.85)';
+  ctx.fillText(
+    isTouch ? 'tap ▶ or anywhere to resume' : 'press P or SPACE to resume',
+    rect.x + rect.w / 2, rect.y + rect.h / 2 + 34
+  );
+  ctx.restore();
+}
+
 // ---------- game loop ----------
 
 function frame(now) {
   if (state.lastFrameTime == null) state.lastFrameTime = now;
   const dt = Math.min(0.05, (now - state.lastFrameTime) / 1000);
   state.lastFrameTime = now;
-  if (state.scene === 'play' && !state.overlay) updatePlay(dt);
+  if (state.scene === 'play' && !state.overlay && !state.paused) updatePlay(dt);
   else state.codeInput.update(dt);
   draw();
   requestAnimationFrame(frame);
@@ -614,10 +817,8 @@ if (inBrowser) {
   resize();
   requestAnimationFrame(frame);
 } else {
-  // Snapshot environment: set up a sensible canvas size from globals.
   canvas.width = (typeof innerWidth !== 'undefined' ? innerWidth : 1280);
   canvas.height = (typeof innerHeight !== 'undefined' ? innerHeight : 720);
 }
 
-// Exposed for tests / snapshot.
 export const _state = state;

@@ -26,6 +26,9 @@ function parseArgs(argv) {
     else if (a === '--health') out.health = parseInt(argv[++i], 10);
     else if (a === '--destroyed') out.destroyed = parseInt(argv[++i], 10);
     else if (a === '--banner') out.banner = argv[++i];
+    else if (a === '--paused') out.paused = argv[++i] !== 'false';
+    else if (a === '--interface') out.interface = argv[++i];
+    else if (a === '--press') out.press = argv[++i]; // e.g. ".-._..-" where _ = short gap
     else if (a === '-h' || a === '--help') out.help = true;
   }
   return out;
@@ -97,6 +100,23 @@ if (args.code) drawOptions.currentCode = args.code;
 if (args.health !== undefined) drawOptions.health = args.health;
 if (args.destroyed !== undefined) drawOptions.destroyed = args.destroyed;
 if (args.banner) drawOptions.invalidBanner = args.banner;
+if (args.paused !== undefined) drawOptions.paused = args.paused;
+if (args.interface) drawOptions.interface = args.interface;
+if (args.press) {
+  // Encoding: `.` or `-` emit a press; `|` = char gap (3u) before next press;
+  // ` ` = word gap (7u); default in-letter spacing is 1u.
+  const entries = [];
+  let gapUnits = 0;
+  for (const ch of args.press) {
+    if (ch === '.' || ch === '-') {
+      entries.push({ sym: ch, gapUnits });
+      gapUnits = 1;
+    } else if (ch === '|') gapUnits = 3;
+    else if (ch === ' ') gapUnits = 7;
+  }
+  if (entries.length) entries[0].gapUnits = 0;
+  drawOptions.press = entries;
+}
 if (args.scene === 'dead') {
   drawOptions.lastRun = {
     destroyed: args.destroyed ?? 12,

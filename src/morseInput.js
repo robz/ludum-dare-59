@@ -6,6 +6,8 @@
 const noop = () => {};
 const MIN_UNIT = 80;
 const MAX_UNIT = 800;
+const HISTORY_MAX_MS = 60_000;
+const HISTORY_MAX_LEN = 400;
 
 export class MorseInput {
   constructor(opts = {}) {
@@ -18,6 +20,7 @@ export class MorseInput {
     this._pressStart = null;
     this._currentCode = '';
     this._charTimer = null;
+    this._history = []; // { start, end, symbol }
   }
 
   setUnit(unit) {
@@ -28,6 +31,8 @@ export class MorseInput {
   getUnit() { return this.unit; }
   getCurrentCode() { return this._currentCode; }
   isPressed() { return this._pressStart !== null; }
+  pressStartTime() { return this._pressStart; }
+  getHistory() { return this._history; }
 
   pressStart(now = performance.now()) {
     if (this._pressStart !== null) return;
@@ -38,16 +43,25 @@ export class MorseInput {
 
   pressEnd(now = performance.now()) {
     if (this._pressStart === null) return;
-    const duration = now - this._pressStart;
+    const start = this._pressStart;
+    const duration = now - start;
     this._pressStart = null;
     const symbol = duration < 2 * this.unit ? '.' : '-';
     const estimate = symbol === '.' ? duration : duration / 3;
     this.unit = clamp(0.85 * this.unit + 0.15 * estimate, MIN_UNIT, MAX_UNIT);
     this._currentCode += symbol;
+    this._pushHistory({ start, end: now, symbol });
     this.onSymbol(symbol, duration);
     this.onPressEnd();
     const gap = Math.max(this.unit * 3, 180);
     this._charTimer = setTimeout(() => this._completeCharacter(), gap);
+  }
+
+  _pushHistory(entry) {
+    this._history.push(entry);
+    const cutoff = entry.end - HISTORY_MAX_MS;
+    while (this._history.length > 0 && this._history[0].end < cutoff) this._history.shift();
+    while (this._history.length > HISTORY_MAX_LEN) this._history.shift();
   }
 
   _completeCharacter() {
@@ -66,6 +80,7 @@ export class MorseInput {
     if (this._charTimer) { clearTimeout(this._charTimer); this._charTimer = null; }
     this._pressStart = null;
     this._currentCode = '';
+    this._history = [];
   }
 }
 

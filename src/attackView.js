@@ -95,7 +95,7 @@ export class AttackView {
         this.explosions.push({ x: tx, y: ty, t: 0, big: !!m.completed });
         if (m.completed) {
           result.destroyed += 1;
-          result.destroyedText = target.text;
+          (result.destroyedTexts ||= []).push(target.text);
         }
       }
     }

@@ -5,6 +5,7 @@ export const DEFAULTS = Object.freeze({
   unitMs: 200,
   volume: 0.35,
   showUnit: true,
+  interface: 'tree', // 'tree' | 'sliding'
 });
 
 const STORAGE_KEY = 'morse-settings-v1';
@@ -26,6 +27,7 @@ export function saveSettings(s) {
 }
 
 const ITEMS = [
+  { key: 'interface', label: 'Code interface', options: ['tree', 'sliding'], fmt: v => v.toUpperCase() },
   { key: 'maxHits', label: 'Hits required to die', min: 1, max: 10, step: 1, fmt: v => `${v}` },
   { key: 'unitMs',  label: 'Initial unit duration', min: 80, max: 600, step: 20, fmt: v => `${v} ms` },
   { key: 'volume',  label: 'Master volume',         min: 0, max: 1,  step: 0.05, fmt: v => `${Math.round(v * 100)}%` },
@@ -49,6 +51,10 @@ export class SettingsOverlay {
       const item = ITEMS[this.selected];
       if (item.toggle) {
         this.settings[item.key] = !this.settings[item.key];
+      } else if (item.options) {
+        const idx = item.options.indexOf(this.settings[item.key]);
+        const next = (idx + dir + item.options.length) % item.options.length;
+        this.settings[item.key] = item.options[next];
       } else {
         const next = clamp((this.settings[item.key] ?? 0) + dir * item.step, item.min, item.max);
         this.settings[item.key] = Math.round(next * 1000) / 1000;
@@ -106,9 +112,10 @@ export class SettingsOverlay {
       const value = this.settings[item.key];
       ctx.textAlign = 'right';
       ctx.fillStyle = active ? '#b6ffc4' : '#8fffa1';
-      const prefix = active && !item.toggle ? '◂ ' : '';
-      const suffix = active && !item.toggle ? ' ▸' : '';
-      const txt = active && item.toggle ? `◂ ${item.fmt(value)} ▸` : `${prefix}${item.fmt(value)}${suffix}`;
+      const adjustable = !!(item.toggle || item.options || !item.toggle);
+      const prefix = active ? '◂ ' : '';
+      const suffix = active ? ' ▸' : '';
+      const txt = `${prefix}${item.fmt(value)}${suffix}`;
       ctx.fillText(txt, mx + mw - 36, rowY);
       const def = DEFAULTS[item.key];
       if (def !== undefined && def !== value) {

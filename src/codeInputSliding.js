@@ -1,4 +1,4 @@
-// Visual tree-traversal interface for morse code input.
+// Sliding morse-code-tree interface.
 // Displays the three nodes directly in view (left child, current, right child)
 // and animates the slide when a new dot or dash is entered.
 //
@@ -9,7 +9,7 @@ import { codeToLetter, childOf } from './morse.js';
 const ANIM_MS = 260;
 const FLASH_MS = 700;
 
-export class CodeInput {
+export class CodeInputSliding {
   constructor() {
     this.currentCode = '';
     this.prevCode = '';
